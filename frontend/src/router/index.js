@@ -3,22 +3,34 @@ import { useUserStore } from '../stores/user'
 
 const routes = [
   {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/Login.vue'),
+    meta: { title: '登录', requiresAuth: false }
+  },
+  {
     path: '/',
-    name: 'Home',
-    component: () => import('../views/Home.vue'),
-    meta: { title: '首页' }
+    name: 'Dashboard',
+    component: () => import('../views/Dashboard.vue'),
+    meta: { title: '仪表盘', requiresAuth: true }
   },
   {
-    path: '/search',
-    name: 'Search',
-    component: () => import('../views/Search.vue'),
-    meta: { title: '论文搜索', requiresAuth: true }
+    path: '/new-request',
+    name: 'NewRequest',
+    component: () => import('../views/NewRequest.vue'),
+    meta: { title: '提交需求', requiresAuth: true }
   },
   {
-    path: '/ai-chat',
-    name: 'AiChat',
-    component: () => import('../views/AiChat.vue'),
-    meta: { title: 'AI助手', requiresAuth: true }
+    path: '/matches',
+    name: 'MatchingResults',
+    component: () => import('../views/MatchingResults.vue'),
+    meta: { title: '匹配结果', requiresAuth: true }
+  },
+  {
+    path: '/solution/:id',
+    name: 'SolutionViewer',
+    component: () => import('../views/SolutionViewer.vue'),
+    meta: { title: '方案详情', requiresAuth: true }
   }
 ]
 
@@ -30,13 +42,18 @@ const router = createRouter({
 // 路由守卫
 router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
-  
-  if (to.meta.requiresAuth && !userStore.isLoggedIn) {
-    // 需要登录但未登录，重定向到首页
-    next('/')
-  } else {
-    next()
+  const isAuthed = userStore.isLoggedIn
+
+  if (to.name === 'Login' && isAuthed) {
+    const redirect = (to.query.redirect || '/').toString()
+    return next(redirect)
   }
+
+  if (to.meta.requiresAuth && !isAuthed) {
+    return next({ name: 'Login', query: { redirect: to.fullPath } })
+  }
+
+  next()
 })
 
 export default router

@@ -15,15 +15,14 @@
               router
               class="nav-menu"
             >
-              <el-menu-item index="/">首页</el-menu-item>
-              <el-menu-item index="/search">论文搜索</el-menu-item>
-              <el-menu-item index="/ai-chat">AI助手</el-menu-item>
+              <el-menu-item index="/">仪表盘</el-menu-item>
+              <el-menu-item index="/new-request">提交需求</el-menu-item>
+              <el-menu-item index="/matches">匹配结果</el-menu-item>
+              <el-menu-item index="/solution/101">方案详情</el-menu-item>
             </el-menu>
           </div>
           <div class="user-actions">
-            <el-button v-if="!userStore.isLoggedIn" @click="showLogin = true">
-              登录
-            </el-button>
+            <el-button v-if="!userStore.isLoggedIn" @click="$router.push('/login')">登录</el-button>
             <el-button v-if="!userStore.isLoggedIn" @click="showRegister = true">
               注册
             </el-button>
