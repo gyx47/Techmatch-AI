@@ -19,6 +19,10 @@ sentence-transformers>=2.3.0
 chromadb>=0.4.22
 torch>=2.0.0
 huggingface_hub>=0.20.0,<0.23.0
+# 注意：如果遇到 TensorFlow DLL 问题，可以尝试：
+# 1. 安装 tensorflow-cpu: pip install tensorflow-cpu
+# 2. 或降级 transformers: pip install transformers==4.30.0
+# transformers>=4.30.0  # 某些新版本强制依赖 TensorFlow，如果遇到问题可以降级
 
 # 数据处理
 pydantic==2.5.0

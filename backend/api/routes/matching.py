@@ -4,6 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List
+import threading
 
 from api.routes.auth import get_current_user_optional as get_current_user
 from services.matching_service import match_papers
@@ -14,6 +15,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 索引任务状态管理
+_indexer_running = False
+_indexer_progress = {
+    "status": "idle",  # idle, running, completed, error
+    "total": 0,
+    "processed": 0,
+    "skipped": 0,
+    "error": 0,
+    "message": ""
+}
+_indexer_lock = threading.Lock()
 
 class MatchingRequest(BaseModel):
     requirement: str  # 用户需求文本
@@ -59,11 +72,30 @@ async def index_existing_papers(
     current_user: str = Depends(get_current_user)
 ):
     """
-    将数据库中已有的论文索引到向量数据库
+    将数据库中未向量化的论文索引到向量数据库
     这是一个后台任务，会立即返回
     """
+    global _indexer_running, _indexer_progress
+    
+    # 检查是否已有任务在运行
+    with _indexer_lock:
+        if _indexer_running:
+            raise HTTPException(status_code=400, detail="索引任务正在运行中，请稍后再试")
+        
+        _indexer_running = True
+        _indexer_progress = {
+            "status": "running",
+            "total": 0,
+            "processed": 0,
+            "skipped": 0,
+            "error": 0,
+            "message": "正在初始化..."
+        }
+    
     def _index_papers():
         """后台任务：索引论文"""
+        global _indexer_running, _indexer_progress
+        
         try:
             # 获取数据库连接
             conn = get_db_connection()
@@ -81,10 +113,20 @@ async def index_existing_papers(
             papers = cursor.fetchall()
             conn.close()
             
-            logger.info(f"找到 {len(papers)} 篇论文需要索引")
+            total_papers = len(papers)
+            
+            with _indexer_lock:
+                _indexer_progress["total"] = total_papers
+                _indexer_progress["message"] = f"找到 {total_papers} 篇论文，开始索引..."
+            
+            logger.info(f"找到 {total_papers} 篇论文需要索引")
             
             if not papers:
+                with _indexer_lock:
+                    _indexer_progress["status"] = "completed"
+                    _indexer_progress["message"] = "数据库中没有论文，请先运行爬虫"
                 logger.warning("数据库中没有论文，请先运行爬虫")
+                _indexer_running = False
                 return
             
             # 获取向量服务
@@ -99,7 +141,7 @@ async def index_existing_papers(
             skipped_count = 0
             error_count = 0
             
-            for paper in papers:
+            for idx, paper in enumerate(papers):
                 try:
                     arxiv_id = paper["arxiv_id"]
                     title = paper["title"]
@@ -109,42 +151,56 @@ async def index_existing_papers(
                         skipped_count += 1
                         continue
                     
-                    # 检查是否已存在
-                    try:
-                        results = vector_service.collection.get(ids=[arxiv_id])
-                        if results and results.get('ids') and len(results['ids']) > 0:
-                            skipped_count += 1
-                            continue
-                    except:
-                        pass  # 不存在，继续添加
+                    # 添加到向量数据库（内部会检查是否已存在）
+                    added = vector_service.add_paper(arxiv_id, title, abstract)
+                    if added:
+                        processed_count += 1
+                    else:
+                        skipped_count += 1
                     
-                    # 添加到向量数据库
-                    vector_service.add_paper(arxiv_id, title, abstract)
-                    processed_count += 1
+                    # 更新进度
+                    with _indexer_lock:
+                        _indexer_progress["processed"] = processed_count
+                        _indexer_progress["skipped"] = skipped_count
+                        _indexer_progress["error"] = error_count
+                        _indexer_progress["message"] = f"已处理 {idx + 1}/{total_papers} 篇论文..."
                     
                     if processed_count % 10 == 0:
                         logger.info(f"已处理 {processed_count} 篇论文...")
                         
                 except Exception as e:
                     error_count += 1
-                    logger.error(f"处理论文 {paper.get('arxiv_id', 'unknown')} 失败: {str(e)}")
+                    paper_id = paper["arxiv_id"] if "arxiv_id" in paper.keys() else 'unknown'
+                    logger.error(f"处理论文 {paper_id} 失败: {str(e)}")
+                    with _indexer_lock:
+                        _indexer_progress["error"] = error_count
                     continue
+            
+            final_count = vector_service.get_paper_count()
+            
+            with _indexer_lock:
+                _indexer_progress["status"] = "completed"
+                _indexer_progress["message"] = f"索引完成！成功: {processed_count} 篇，跳过: {skipped_count} 篇，失败: {error_count} 篇"
             
             logger.info(f"索引完成！")
             logger.info(f"  - 成功处理: {processed_count} 篇")
             logger.info(f"  - 跳过（已存在）: {skipped_count} 篇")
             logger.info(f"  - 处理失败: {error_count} 篇")
-            logger.info(f"  - 向量数据库总数: {vector_service.get_paper_count()} 篇")
+            logger.info(f"  - 向量数据库总数: {final_count} 篇")
             
         except Exception as e:
+            with _indexer_lock:
+                _indexer_progress["status"] = "error"
+                _indexer_progress["message"] = f"索引过程失败: {str(e)}"
             logger.error(f"索引过程失败: {str(e)}")
-            raise
+        finally:
+            _indexer_running = False
     
     # 添加到后台任务
     background_tasks.add_task(_index_papers)
     
     return {
-        "message": "索引任务已在后台启动，请查看日志了解进度",
+        "message": "索引任务已在后台启动",
         "status": "started"
     }
 
@@ -162,11 +218,23 @@ async def get_vector_stats(current_user: str = Depends(get_current_user)):
         db_total = cursor.fetchone()["total"]
         conn.close()
         
+        # 获取索引任务状态
+        with _indexer_lock:
+            indexer_status = _indexer_progress.copy()
+        
         return {
             "vector_db_count": count,
             "database_count": db_total,
-            "indexed_percentage": round(count / db_total * 100, 2) if db_total > 0 else 0
+            "indexed_percentage": round(count / db_total * 100, 2) if db_total > 0 else 0,
+            "unindexed_count": db_total - count,
+            "indexer_status": indexer_status
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
+
+@router.get("/index-status")
+async def get_index_status(current_user: str = Depends(get_current_user)):
+    """获取索引任务状态"""
+    with _indexer_lock:
+        return _indexer_progress.copy()
 

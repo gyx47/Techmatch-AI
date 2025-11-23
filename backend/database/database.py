@@ -3,7 +3,7 @@
 """
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 import logging
 
 # 配置日志
@@ -116,16 +116,40 @@ def create_user(username: str, email: str, password_hash: str) -> int:
     conn.close()
     return user_id
 
-def save_paper(paper_data: dict) -> int:
-    """保存论文信息"""
+def save_paper(paper_data: dict) -> Tuple[Optional[int], bool]:
+    """
+    保存论文信息
+    如果论文已存在（根据 arxiv_id），则返回已存在的记录ID，不进行插入或替换
+    返回: (论文ID, 是否为新插入)
+        - 如果已存在: (paper_id, False)
+        - 如果新插入: (paper_id, True)
+        - 如果失败: (None, False)
+    """
+    arxiv_id = paper_data.get('arxiv_id')
+    if not arxiv_id:
+        logger.warning("论文数据缺少 arxiv_id，无法保存")
+        return None, False
+    
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 先检查是否已存在
+    cursor.execute("SELECT id FROM papers WHERE arxiv_id = ?", (arxiv_id,))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # 论文已存在，返回已存在的ID，不进行任何操作
+        paper_id = existing['id']
+        conn.close()
+        return paper_id, False
+    
+    # 论文不存在，执行插入
     cursor.execute("""
-        INSERT OR REPLACE INTO papers 
+        INSERT INTO papers 
         (arxiv_id, title, authors, abstract, published_date, categories, pdf_url)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
-        paper_data.get('arxiv_id'),
+        arxiv_id,
         paper_data.get('title'),
         paper_data.get('authors'),
         paper_data.get('abstract'),
@@ -136,7 +160,7 @@ def save_paper(paper_data: dict) -> int:
     paper_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    return paper_id
+    return paper_id, True
 
 def get_papers_by_query(query: str, limit: int = 20) -> list:
     """根据查询条件搜索论文"""
