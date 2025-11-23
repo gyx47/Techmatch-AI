@@ -11,12 +11,17 @@
           <span>返回</span>
         </el-button>
         <div class="title-section">
-          <h1 class="title">{{ proposalData.title }}</h1>
+          <h1 class="title">{{ proposalData.title || '加载中...' }}</h1>
           <p class="subtitle">合作方案详情</p>
         </div>
       </div>
-
-      <el-row :gutter="20">
+      
+      <div v-if="loading" class="loading-container">
+        <el-skeleton :rows="10" animated />
+      </div>
+      
+      <div v-else>
+        <el-row :gutter="20">
         <!-- 左侧内容 (2/3) -->
         <el-col :span="16">
           <!-- AI 匹配分析 -->
@@ -124,7 +129,8 @@
             </el-button>
           </div>
         </el-col>
-      </el-row>
+        </el-row>
+      </div>
     </div>
   </div>
 </template>
@@ -134,40 +140,110 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { MagicStick, User, Phone, Message, OfficeBuilding, ArrowLeft } from '@element-plus/icons-vue'
+import api from '../api'
 
 const route = useRoute()
 const router = useRouter()
 
-// Mock 提案数据
+// 提案数据
 const proposalData = ref({
-  title: '基于深度学习的智能图像识别系统',
-  aiAnalysis: '根据您的需求，该项目在核心算法上高度契合。该成果采用的卷积神经网络(CNN)和Transformer架构，与您提出的"高精度图像分类"需求完美匹配。系统在医疗影像分析、工业质检等场景的应用经验，能够直接满足您的应用场景要求。技术成熟度达到产业化水平，预期合作周期合理，建议优先对接。',
-  description: '本项目开发了一套基于深度学习的智能图像识别系统，采用先进的卷积神经网络(CNN)和Transformer架构，实现了高精度的图像分类和目标检测功能。系统支持多场景应用，包括医疗影像分析、工业质检、自动驾驶等领域。经过大量实验验证，系统准确率达到98.5%，处理速度相比传统方法提升40%。该技术已申请多项发明专利，具备完整的知识产权保护。',
-  field: '人工智能/计算机视觉',
-  application: '医疗影像、工业质检、自动驾驶',
-  maturity: '产业化阶段',
-  duration: '6-12个月',
-  advantages: '高准确率、快速处理、多场景适配、完整知识产权',
-  matchScore: 95,
-  techMatch: 98,
-  needMatch: 92,
-  appMatch: 95
+  title: '',
+  aiAnalysis: '',
+  description: '',
+  field: '',
+  application: '',
+  maturity: '',
+  duration: '',
+  advantages: '',
+  matchScore: 0,
+  techMatch: 0,
+  needMatch: 0,
+  appMatch: 0
 })
 
-// Mock 联系人信息
+// 联系人信息
 const contactInfo = ref({
-  name: '张教授',
-  phone: '138-0000-1234',
-  email: 'zhang.prof@ai-lab.edu.cn',
-  organization: 'XX大学人工智能研究院'
+  name: '',
+  phone: '',
+  email: '',
+  organization: ''
 })
+
+const loading = ref(true)
 
 // 根据路由参数加载数据
-onMounted(() => {
-  const id = route.params.id
-  // 这里可以根据 id 从 API 加载数据
-  // 目前使用 Mock 数据
+onMounted(async () => {
+  const paperId = route.params.id
+  
+  try {
+    // 首先尝试从 localStorage 获取匹配结果数据
+    const matchState = localStorage.getItem('smartMatchState')
+    if (matchState) {
+      const state = JSON.parse(matchState)
+      // 检查状态是否过期（30分钟内有效）
+      const isExpired = Date.now() - state.timestamp > 30 * 60 * 1000
+      if (!isExpired && state.results) {
+        // 从匹配结果中找到对应的论文
+        const paper = state.results.find(p => p.paper_id === paperId || p.id === paperId)
+        if (paper) {
+          loadPaperData(paper)
+          loading.value = false
+          return
+        }
+      }
+    }
+    
+    // 如果 localStorage 没有，尝试从 sessionStorage 获取
+    const sessionResults = sessionStorage.getItem('matchingResults')
+    if (sessionResults) {
+      const data = JSON.parse(sessionResults)
+      const papers = data.papers || []
+      const paper = papers.find(p => p.paper_id === paperId || p.id === paperId)
+      if (paper) {
+        loadPaperData(paper)
+        loading.value = false
+        return
+      }
+    }
+    
+    // 如果都没有，显示错误
+    ElMessage.error('未找到匹配结果，请重新进行匹配')
+    router.push('/smart-match')
+  } catch (error) {
+    console.error('加载数据失败:', error)
+    ElMessage.error('加载数据失败')
+    loading.value = false
+  }
 })
+
+// 加载论文数据
+const loadPaperData = (paper) => {
+  // 从匹配结果中提取数据
+  proposalData.value = {
+    title: paper.title || '无标题',
+    aiAnalysis: paper.reason || '暂无AI分析',
+    description: paper.abstract || paper.summary || '暂无描述',
+    field: paper.categories || paper.field || '未分类',
+    application: paper.categories || paper.field || '未分类', // 可以从 categories 推断应用场景
+    maturity: '研究阶段', // 默认值，可以从论文信息推断
+    duration: '6-12个月', // 默认值
+    advantages: paper.match_type || '技术匹配', // 使用匹配类型作为优势
+    matchScore: paper.matchScore || paper.score || 0,
+    techMatch: Math.round((paper.matchScore || paper.score || 0) * 0.98), // 技术匹配度
+    needMatch: Math.round((paper.matchScore || paper.score || 0) * 0.92), // 需求匹配度
+    appMatch: paper.matchScore || paper.score || 0 // 应用匹配度
+  }
+  
+  // 联系人信息（从作者信息推断）
+  const authors = paper.authors || ''
+  const authorList = authors.split(',').filter(a => a.trim())
+  contactInfo.value = {
+    name: authorList.length > 0 ? authorList[0].trim() : '未提供',
+    phone: '未提供',
+    email: '未提供',
+    organization: paper.categories ? `相关领域：${paper.categories}` : '未提供'
+  }
+}
 
 // 获取匹配度颜色
 const getScoreColor = (score) => {
@@ -195,11 +271,30 @@ const handleBack = () => {
       query: { tab }
     })
   } else if (from === 'smart-match') {
-    // 返回到智能匹配页面
+    // 返回到智能匹配页面，并恢复匹配状态
+    // 检查是否有保存的匹配状态
+    const matchState = localStorage.getItem('smartMatchState')
+    if (matchState) {
+      const state = JSON.parse(matchState)
+      const isExpired = Date.now() - state.timestamp > 30 * 60 * 1000
+      if (!isExpired) {
+        // 状态未过期，跳转并传递参数以恢复状态
+        router.push({
+          path: '/smart-match',
+          query: {
+            restore: 'true',
+            searchText: state.searchText,
+            matchMode: state.matchMode
+          }
+        })
+        return
+      }
+    }
+    // 如果没有保存的状态，直接跳转
     router.push('/smart-match')
   } else {
-    // 默认返回到资源大厅
-    router.push('/dashboard')
+    // 默认返回到智能匹配页面（因为通常是从匹配结果页面跳转过来的）
+    router.push('/smart-match')
   }
 }
 </script>
@@ -399,6 +494,10 @@ const handleBack = () => {
 .contact-btn {
   width: 100%;
   margin-top: 8px;
+}
+
+.loading-container {
+  margin-top: 20px;
 }
 
 :deep(.el-descriptions__label) {

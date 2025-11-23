@@ -3,13 +3,13 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import threading
 
 from api.routes.auth import get_current_user_optional as get_current_user
 from services.matching_service import match_papers
 from services.vector_service import get_vector_service
-from database.database import get_db_connection
+from database.database import get_db_connection, get_user_by_username, save_match_history, get_match_history, get_match_results_by_history_id
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,10 +31,13 @@ _indexer_lock = threading.Lock()
 class MatchingRequest(BaseModel):
     requirement: str  # 用户需求文本
     top_k: int = 50   # 返回的论文数量
+    match_mode: str = "enterprise"  # 匹配模式：enterprise（企业找成果）或 researcher（专家找需求）
+    save_history: bool = True  # 是否保存匹配历史
 
 class MatchingResponse(BaseModel):
     papers: List[dict]
     total: int
+    history_id: Optional[int] = None  # 如果保存了历史，返回历史ID
 
 @router.post("/match", response_model=MatchingResponse)
 async def match_user_requirement(
@@ -47,6 +50,7 @@ async def match_user_requirement(
     2. 在向量数据库中搜索 Top-K 相似论文
     3. 使用 DeepSeek LLM 对每篇论文进行评分
     4. 按分数排序返回
+    5. 可选：保存匹配历史到数据库
     """
     try:
         if not request.requirement or not request.requirement.strip():
@@ -58,9 +62,31 @@ async def match_user_requirement(
             top_k=request.top_k
         )
         
+        history_id = None
+        
+        # 如果启用保存历史，保存到数据库
+        if request.save_history and results:
+            try:
+                # 获取用户ID
+                user = get_user_by_username(current_user)
+                user_id = user["id"] if user else None
+                
+                # 保存匹配历史
+                history_id = save_match_history(
+                    user_id=user_id,
+                    search_desc=request.requirement,
+                    match_mode=request.match_mode,
+                    results=results
+                )
+                logger.info(f"匹配历史已保存，历史ID: {history_id}")
+            except Exception as e:
+                # 保存历史失败不影响匹配结果返回
+                logger.error(f"保存匹配历史失败: {e}")
+        
         return {
             "papers": results,
-            "total": len(results)
+            "total": len(results),
+            "history_id": history_id
         }
         
     except Exception as e:
@@ -108,6 +134,7 @@ async def index_existing_papers(
                 WHERE arxiv_id IS NOT NULL 
                 AND title IS NOT NULL
                 ORDER BY created_at DESC
+                LIMIT 100
             """)
             
             papers = cursor.fetchall()
@@ -209,7 +236,35 @@ async def get_vector_stats(current_user: str = Depends(get_current_user)):
     """获取向量数据库统计信息"""
     try:
         vector_service = get_vector_service()
-        count = vector_service.get_paper_count()
+        
+        # 检查集合健康状态
+        health = vector_service.check_collection_health()
+        
+        if not health["healthy"]:
+            # 集合损坏，返回错误信息
+            error_msg = health["error"]
+            is_corrupted = 'Cannot open header file' in error_msg or 'header file' in error_msg.lower()
+            
+            # 获取数据库中的论文总数（即使向量数据库损坏也能获取）
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as total FROM papers WHERE arxiv_id IS NOT NULL")
+            db_total = cursor.fetchone()["total"]
+            conn.close()
+            
+            return {
+                "vector_db_count": 0,
+                "database_count": db_total,
+                "indexed_percentage": 0,
+                "unindexed_count": db_total,
+                "healthy": False,
+                "error": error_msg,
+                "is_corrupted": is_corrupted,
+                "fix_suggestion": "请运行修复脚本: python backend/scripts/fix_chromadb.py" if is_corrupted else None,
+                "indexer_status": {"status": "idle"}
+            }
+        
+        count = health["count"]
         
         # 获取数据库中的论文总数
         conn = get_db_connection()
@@ -227,10 +282,117 @@ async def get_vector_stats(current_user: str = Depends(get_current_user)):
             "database_count": db_total,
             "indexed_percentage": round(count / db_total * 100, 2) if db_total > 0 else 0,
             "unindexed_count": db_total - count,
+            "healthy": True,
             "indexer_status": indexer_status
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
+        error_msg = str(e)
+        is_corrupted = 'Cannot open header file' in error_msg or 'header file' in error_msg.lower()
+        raise HTTPException(
+            status_code=500, 
+            detail={
+                "message": f"获取统计信息失败: {error_msg}",
+                "is_corrupted": is_corrupted,
+                "fix_suggestion": "请运行修复脚本: python backend/scripts/fix_chromadb.py" if is_corrupted else None
+            }
+        )
+
+@router.get("/history")
+async def get_match_history_list(
+    page: int = 1,
+    page_size: int = 20,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    获取匹配历史列表
+    """
+    try:
+        # 获取用户ID
+        user = get_user_by_username(current_user)
+        user_id = user["id"] if user else None
+        
+        # 获取匹配历史
+        history_data = get_match_history(user_id=user_id, page=page, page_size=page_size)
+        
+        # 格式化返回数据
+        items = []
+        for item in history_data["items"]:
+            items.append({
+                "history_id": item["id"],
+                "search_desc": item["search_desc"],
+                "match_mode": item["match_mode"],
+                "match_type": "找成果" if item["match_mode"] == "enterprise" else "找需求",
+                "result_count": item["result_count"],
+                "match_time": item["created_at"]
+            })
+        
+        return {
+            "total": history_data["total"],
+            "page": history_data["page"],
+            "page_size": history_data["page_size"],
+            "items": items
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取匹配历史失败: {str(e)}")
+
+@router.get("/history/{history_id}/results")
+async def get_match_history_results(
+    history_id: int,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    根据历史ID获取匹配结果详情
+    """
+    try:
+        # 验证历史记录是否属于当前用户
+        user = get_user_by_username(current_user)
+        user_id = user["id"] if user else None
+        
+        # 检查历史记录是否存在且属于当前用户
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if user_id:
+            cursor.execute("SELECT * FROM match_history WHERE id = ? AND user_id = ?", (history_id, user_id))
+        else:
+            cursor.execute("SELECT * FROM match_history WHERE id = ?", (history_id,))
+        history = cursor.fetchone()
+        conn.close()
+        
+        if not history:
+            raise HTTPException(status_code=404, detail="匹配历史不存在")
+        
+        # 获取匹配结果
+        results = get_match_results_by_history_id(history_id)
+        
+        # 转换为前端需要的格式
+        papers = []
+        for result in results:
+            papers.append({
+                "paper_id": result["paper_id"],
+                "title": result["title"],
+                "abstract": result["abstract"],
+                "authors": result["authors"],
+                "published_date": result["published_date"],
+                "categories": result["categories"],
+                "pdf_url": result["pdf_url"],
+                "score": result["score"],
+                "reason": result["reason"],
+                "match_type": result["match_type"],
+                "vector_score": result["vector_score"]
+            })
+        
+        return {
+            "history_id": history_id,
+            "search_desc": history["search_desc"],
+            "match_mode": history["match_mode"],
+            "match_time": history["created_at"],
+            "papers": papers,
+            "total": len(papers)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取匹配结果失败: {str(e)}")
 
 @router.get("/index-status")
 async def get_index_status(current_user: str = Depends(get_current_user)):

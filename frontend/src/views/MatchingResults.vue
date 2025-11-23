@@ -25,11 +25,16 @@
               <div class="card-body">
                 <p class="desc">{{ item.abstract || item.desc || '暂无摘要' }}</p>
                 <div class="confidence" v-if="item.score !== undefined">
-                  <span>Match Score: {{ (item.score * 100).toFixed(1) }}%</span>
+                  <div class="score-header">
+                    <span>Match Score: {{ formatScore(item.score) }}%</span>
+                    <el-tag v-if="item.match_type" :type="getMatchTypeTagType(item.match_type)" size="small">
+                      {{ item.match_type }}
+                    </el-tag>
+                  </div>
                   <el-progress 
-                    :percentage="item.score * 100" 
+                    :percentage="formatScore(item.score)" 
                     :stroke-width="10" 
-                    :status="item.score > 0.8 ? 'success' : item.score > 0.6 ? 'warning' : 'exception'" 
+                    :status="formatScore(item.score) >= 90 ? 'success' : formatScore(item.score) >= 75 ? 'warning' : 'exception'" 
                   />
                 </div>
                 <div class="confidence" v-else-if="item.confidence !== undefined">
@@ -39,6 +44,10 @@
                 <div class="reason" v-if="item.reason">
                   <strong>推荐理由:</strong>
                   <p>{{ item.reason }}</p>
+                </div>
+                <div class="paper-meta" v-if="item.authors || item.published_date">
+                  <span v-if="item.authors" class="authors">作者: {{ item.authors.split(',').slice(0, 3).join(', ') }}{{ item.authors.split(',').length > 3 ? '等' : '' }}</span>
+                  <span v-if="item.published_date" class="date">发布时间: {{ formatDate(item.published_date) }}</span>
                 </div>
               </div>
               <div class="card-footer">
@@ -101,6 +110,37 @@ const openPdf = (url) => {
   if (url) {
     window.open(url, '_blank')
   }
+}
+
+// 格式化分数（后端返回的可能是 0-100 或 0-1）
+const formatScore = (score) => {
+  if (!score) return 0
+  // 如果分数大于1，说明已经是0-100格式，直接返回
+  // 如果分数小于等于1，说明是0-1格式，需要乘以100
+  return score > 1 ? Math.round(score) : Math.round(score * 100)
+}
+
+// 格式化日期
+const formatDate = (dateStr) => {
+  if (!dateStr) return ''
+  try {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+  } catch (e) {
+    return dateStr
+  }
+}
+
+// 获取匹配类型标签类型
+const getMatchTypeTagType = (matchType) => {
+  if (matchType && matchType.includes('S级')) return 'success'
+  if (matchType && matchType.includes('A级')) return 'warning'
+  if (matchType && matchType.includes('B级')) return 'info'
+  return ''
 }
 
 // 加载匹配结果
@@ -170,6 +210,18 @@ onMounted(() => {
 }
 .paper-id { 
   font-family: monospace; 
+}
+.authors, .date {
+  display: block;
+  font-size: 12px;
+  color: #999;
+  margin-top: 5px;
+}
+.score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
 }
 .desc { 
   color: #666; 

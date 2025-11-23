@@ -1,15 +1,17 @@
 """
 向量化服务 - 使用 Sentence-Transformers 和 ChromaDB
 """
+
 import logging
 import os
-from typing import List, Dict, Tuple
-from pathlib import Path
-
 # 在导入任何库之前设置环境变量，禁用 TensorFlow
 # 这可以避免 transformers 库尝试加载 TensorFlow
 os.environ.setdefault('TRANSFORMERS_NO_TF', '1')  # 禁用 TensorFlow
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')  # 禁用 TensorFlow 日志
+
+from typing import List, Dict, Tuple
+from pathlib import Path
+
 
 import chromadb
 from chromadb.config import Settings
@@ -33,11 +35,30 @@ class VectorService:
         )
         
         # 获取或创建集合
-        self.collection = self.client.get_or_create_collection(
-            name="papers",
-            metadata={"hnsw:space": "cosine"}
-        )
-        logger.info("ChromaDB 连接成功")
+        try:
+            self.collection = self.client.get_or_create_collection(
+                name="papers",
+                metadata={"hnsw:space": "cosine"}
+            )
+            # 尝试检查集合状态（验证是否可用）
+            try:
+                count = self.collection.count()
+                logger.info(f"ChromaDB 连接成功，集合中有 {count} 篇论文")
+            except Exception as check_err:
+                error_msg = str(check_err)
+                if 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
+                    logger.error("=" * 60)
+                    logger.error("警告：ChromaDB 集合已损坏，无法读取")
+                    logger.error("=" * 60)
+                    logger.error("请运行修复脚本: python backend/scripts/fix_chromadb.py")
+                    logger.error("或手动删除 chroma_db 目录后重新索引")
+                    logger.error("=" * 60)
+                    # 不抛出异常，允许服务启动，但搜索时会失败
+                else:
+                    logger.warning(f"无法检查集合状态: {check_err}")
+        except Exception as e:
+            logger.error(f"初始化 ChromaDB 集合失败: {e}")
+            raise
     
     def _load_model(self):
         """延迟加载模型"""
@@ -157,12 +178,74 @@ class VectorService:
             return similarities
             
         except Exception as e:
-            logger.error(f"向量搜索失败: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"向量搜索失败: {error_msg}")
+            
+            # 检查是否是 ChromaDB 索引文件损坏的错误
+            if 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
+                logger.error("=" * 60)
+                logger.error("检测到 ChromaDB 索引文件损坏错误")
+                logger.error("=" * 60)
+                logger.error("")
+                logger.error("可能的原因：")
+                logger.error("  1. ChromaDB 数据库文件损坏")
+                logger.error("  2. HNSW 索引文件损坏")
+                logger.error("  3. ChromaDB 版本不兼容")
+                logger.error("  4. 数据库文件被其他进程占用")
+                logger.error("")
+                logger.error("当前集合状态：")
+                try:
+                    count = self.collection.count()
+                    logger.error(f"  - 集合中的论文数量: {count}")
+                except Exception as count_err:
+                    logger.error(f"  - 无法获取集合状态: {count_err}")
+                logger.error("")
+                logger.error("解决方案（按顺序尝试）：")
+                logger.error("  1. 重启服务，可能是临时文件锁定问题")
+                logger.error("  2. 运行修复脚本: python backend/scripts/fix_chromadb.py")
+                logger.error("  3. 手动删除 chroma_db 目录并重新索引")
+                logger.error("  4. 检查 ChromaDB 版本兼容性")
+                logger.error("")
+                logger.error("注意：不要自动删除集合，这会导致数据丢失！")
+                logger.error("=" * 60)
+                
+                raise RuntimeError(
+                    "ChromaDB 索引文件损坏。请使用修复脚本或手动删除 chroma_db 目录后重新索引。"
+                    f"详细错误: {error_msg}"
+                )
+            
             raise
     
     def get_paper_count(self) -> int:
         """获取向量数据库中的论文数量"""
-        return self.collection.count()
+        try:
+            return self.collection.count()
+        except Exception as e:
+            error_msg = str(e)
+            if 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
+                logger.error("无法获取论文数量：ChromaDB 索引文件损坏")
+                logger.error("请运行修复脚本: python backend/scripts/fix_chromadb.py")
+            raise
+    
+    def check_collection_health(self) -> Dict:
+        """
+        检查集合健康状态
+        返回: {"healthy": bool, "count": int, "error": str}
+        """
+        try:
+            count = self.collection.count()
+            return {
+                "healthy": True,
+                "count": count,
+                "error": None
+            }
+        except Exception as e:
+            error_msg = str(e)
+            return {
+                "healthy": False,
+                "count": 0,
+                "error": error_msg
+            }
 
 # 全局单例
 _vector_service = None

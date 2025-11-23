@@ -74,7 +74,10 @@
               <!-- Tab 2: 匹配历史 -->
               <el-tab-pane label="匹配历史" name="history">
                 <div class="history-list">
-                  <el-table :data="matchHistory" style="width: 100%" stripe>
+                  <div v-if="loadingHistory" class="loading-container">
+                    <el-skeleton :rows="5" animated />
+                  </div>
+                  <el-table v-else :data="matchHistory" style="width: 100%" stripe>
                     <el-table-column prop="matchTime" label="匹配时间" width="180" sortable>
                       <template #default="scope">
                         {{ scope.row.matchTime }}
@@ -110,6 +113,7 @@
                       </template>
                     </el-table-column>
                   </el-table>
+                  <el-empty v-if="!loadingHistory && matchHistory.length === 0" description="暂无匹配历史" />
                 </div>
               </el-tab-pane>
 
@@ -169,42 +173,92 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Message } from '@element-plus/icons-vue'
+import api from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const activeTab = ref('publishments')
 
-// 从 localStorage 加载匹配历史
-const loadMatchHistory = () => {
+// 从后端API和localStorage加载匹配历史（合并显示）
+const loadMatchHistory = async () => {
+  const allHistory = []
+  
+  // 1. 优先从后端API获取（数据库中的真实数据）
+  try {
+    const response = await api.get('/matching/history', {
+      params: {
+        page: 1,
+        page_size: 100  // 获取所有历史记录
+      }
+    })
+    
+    if (response.data && response.data.items && response.data.items.length > 0) {
+      const dbHistory = response.data.items.map(item => ({
+        id: item.history_id,  // 使用数据库的 history_id
+        matchTime: item.match_time || item.matchTime,
+        searchContent: item.search_desc || item.searchContent,
+        matchType: item.match_type || (item.match_mode === 'enterprise' ? '找成果' : '找需求'),
+        matchCount: item.result_count || item.matchCount || 0,
+        source: 'database'  // 标记来源
+      }))
+      allHistory.push(...dbHistory)
+    }
+  } catch (error) {
+    console.error('从API加载匹配历史失败:', error)
+    // API失败不影响，继续从localStorage加载
+  }
+  
+  // 2. 从 localStorage 加载（本地备份数据）
   try {
     const historyKey = 'matchHistory'
-    const history = JSON.parse(localStorage.getItem(historyKey) || '[]')
-    return history.map(item => ({
-      id: item.id,
+    const localHistory = JSON.parse(localStorage.getItem(historyKey) || '[]')
+    
+    // 将localStorage中的历史记录转换为统一格式
+    const localFormatted = localHistory.map(item => ({
+      id: item.id || `local_${Date.now()}_${Math.random()}`,  // 确保有唯一ID
       matchTime: item.matchTime,
       searchContent: item.searchContent,
       matchType: item.matchType,
-      matchCount: item.matchCount || (item.results ? item.results.length : 0)
+      matchCount: item.matchCount || (item.results ? item.results.length : 0),
+      source: 'localStorage'  // 标记来源
     }))
+    
+    // 合并数据，去重（如果数据库和localStorage有相同的记录）
+    // 优先保留数据库中的记录
+    const existingIds = new Set(allHistory.map(h => h.id))
+    const uniqueLocalHistory = localFormatted.filter(h => !existingIds.has(h.id))
+    allHistory.push(...uniqueLocalHistory)
+    
   } catch (e) {
-    console.error('加载匹配历史失败:', e)
-    return []
+    console.error('从localStorage加载匹配历史失败:', e)
   }
+  
+  // 3. 按时间排序（最新的在前）
+  allHistory.sort((a, b) => {
+    const timeA = new Date(a.matchTime).getTime()
+    const timeB = new Date(b.matchTime).getTime()
+    return timeB - timeA  // 降序
+  })
+  
+  return allHistory
 }
 
-// 匹配历史数据（从 localStorage 加载）
-const matchHistory = ref(loadMatchHistory())
+// 匹配历史数据
+const matchHistory = ref([])
+const loadingHistory = ref(false)
 
 // 监听标签页切换，刷新匹配历史
-watch(activeTab, (newTab) => {
+watch(activeTab, async (newTab) => {
   if (newTab === 'history') {
-    matchHistory.value = loadMatchHistory()
+    loadingHistory.value = true
+    matchHistory.value = await loadMatchHistory()
+    loadingHistory.value = false
   }
 })
 
@@ -215,15 +269,123 @@ const truncateText = (text, maxLength) => {
   return text.substring(0, maxLength) + '...'
 }
 
-// 重新匹配（显示之前的匹配结果）
-const handleRematch = (row) => {
-  // 跳转到智能匹配页面，传递历史记录ID，用于恢复完整的匹配结果
-  router.push({
-    path: '/smart-match',
-    query: {
-      historyId: row.id // 传递历史记录ID
+// 查看匹配结果（优先从数据库加载，失败则从localStorage加载）
+const handleRematch = async (row) => {
+  // 如果来源是localStorage，直接使用localStorage的数据
+  if (row.source === 'localStorage') {
+    try {
+      const historyKey = 'matchHistory'
+      const history = JSON.parse(localStorage.getItem(historyKey) || '[]')
+      const historyItem = history.find(item => item.id === row.id)
+      
+      if (historyItem && historyItem.results && historyItem.results.length > 0) {
+        // 保存到 sessionStorage
+        sessionStorage.setItem('matchingResults', JSON.stringify({
+          papers: historyItem.results,
+          searchText: historyItem.searchContent,
+          matchMode: historyItem.matchMode
+        }))
+        
+        router.push({
+          path: '/smart-match',
+          query: {
+            fromHistory: 'true',
+            q: historyItem.searchContent,
+            type: historyItem.matchMode
+          }
+        })
+        return
+      } else {
+        ElMessage.warning('该历史记录没有保存匹配结果')
+        return
+      }
+    } catch (e) {
+      console.error('从localStorage加载失败:', e)
+      ElMessage.error('加载匹配结果失败')
+      return
     }
-  })
+  }
+  
+  // 如果来源是数据库，从API获取
+  try {
+    // 从后端API获取匹配结果详情
+    const response = await api.get(`/matching/history/${row.id}/results`)
+    
+    if (response.data && response.data.papers) {
+      // 将数据转换为前端需要的格式
+      const convertedResults = response.data.papers.map((paper, index) => {
+        const score = paper.score || 0
+        const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
+        
+        return {
+          id: paper.paper_id || `paper_${index}`,
+          title: paper.title || '无标题',
+          summary: paper.abstract || '暂无摘要',
+          matchScore: matchScore,
+          type: '成果',
+          field: paper.categories || '未分类',
+          keywords: paper.categories ? paper.categories.split(',') : [],
+          paper_id: paper.paper_id,
+          pdf_url: paper.pdf_url,
+          authors: paper.authors || '',
+          published_date: paper.published_date || '',
+          reason: paper.reason || '',
+          match_type: paper.match_type || '',
+          vector_score: paper.vector_score || 0
+        }
+      })
+      
+      // 保存到 sessionStorage，供 SmartMatch 页面使用
+      sessionStorage.setItem('matchingResults', JSON.stringify({
+        papers: convertedResults,
+        searchText: response.data.search_desc,
+        matchMode: response.data.match_mode || 'enterprise'
+      }))
+      
+      // 跳转到智能匹配页面
+      router.push({
+        path: '/smart-match',
+        query: {
+          fromHistory: 'true',
+          q: response.data.search_desc,
+          type: response.data.match_mode || 'enterprise'
+        }
+      })
+    } else {
+      ElMessage.warning('未找到匹配结果')
+    }
+  } catch (error) {
+    console.error('获取匹配结果失败:', error)
+    ElMessage.error('获取匹配结果失败: ' + (error.response?.data?.detail || error.message))
+    
+    // 如果API失败，尝试从 localStorage 恢复（降级方案）
+    try {
+      const historyKey = 'matchHistory'
+      const history = JSON.parse(localStorage.getItem(historyKey) || '[]')
+      const historyItem = history.find(item => item.id === row.id)
+      
+      if (historyItem && historyItem.results) {
+        sessionStorage.setItem('matchingResults', JSON.stringify({
+          papers: historyItem.results,
+          searchText: historyItem.searchContent,
+          matchMode: historyItem.matchMode
+        }))
+        
+        router.push({
+          path: '/smart-match',
+          query: {
+            fromHistory: 'true',
+            q: historyItem.searchContent,
+            type: historyItem.matchMode
+          }
+        })
+      } else {
+        ElMessage.error('未找到匹配结果')
+      }
+    } catch (e) {
+      ElMessage.error('无法加载匹配结果')
+    }
+  }
 }
 const passwordFormRef = ref()
 const changingPassword = ref(false)
@@ -322,6 +484,15 @@ const handleDelete = (row) => {
     // 用户取消
   })
 }
+
+// 初始化时加载匹配历史（如果当前标签页是历史）
+onMounted(async () => {
+  if (activeTab.value === 'history') {
+    loadingHistory.value = true
+    matchHistory.value = await loadMatchHistory()
+    loadingHistory.value = false
+  }
+})
 
 // 修改密码
 const handleChangePassword = async () => {

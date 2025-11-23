@@ -8,6 +8,20 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载环境变量
+# 优先加载项目根目录的 .env 文件，如果没有则加载 backend/.env
+project_root = Path(__file__).parent.parent
+env_file = project_root / ".env"
+if not env_file.exists():
+    # 如果没有 .env，尝试加载 env 文件（向后兼容）
+    env_file = project_root / "env"
+if env_file.exists():
+    load_dotenv(env_file)
+    print(f"已加载环境变量文件: {env_file}")
+else:
+    print("警告: 未找到 .env 文件，将使用系统环境变量")
 
 # 导入路由
 from api.routes import auth, papers, ai, crawler, matching

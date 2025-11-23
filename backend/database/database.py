@@ -3,7 +3,7 @@
 """
 import sqlite3
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import logging
 
 # 配置日志
@@ -74,6 +74,41 @@ def init_db():
                 ai_response TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        
+        # 创建匹配历史表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS match_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                search_desc TEXT NOT NULL,
+                match_mode VARCHAR(20),
+                result_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        
+        # 创建匹配结果表（保存每次匹配的详细结果）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS match_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                history_id INTEGER NOT NULL,
+                paper_id VARCHAR(20),
+                title TEXT,
+                abstract TEXT,
+                authors TEXT,
+                categories TEXT,
+                pdf_url TEXT,
+                published_date DATE,
+                score INTEGER,
+                reason TEXT,
+                match_type VARCHAR(50),
+                vector_score REAL,
+                result_order INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (history_id) REFERENCES match_history (id) ON DELETE CASCADE
             )
         """)
         
@@ -175,3 +210,108 @@ def get_papers_by_query(query: str, limit: int = 20) -> list:
     papers = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return papers
+
+def save_match_history(user_id: Optional[int], search_desc: str, match_mode: str, results: List[dict]) -> int:
+    """
+    保存匹配历史
+    返回: 匹配历史ID
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # 插入匹配历史记录
+        cursor.execute("""
+            INSERT INTO match_history (user_id, search_desc, match_mode, result_count)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, search_desc, match_mode, len(results)))
+        
+        history_id = cursor.lastrowid
+        
+        # 插入匹配结果详情
+        for order, result in enumerate(results, 1):
+            cursor.execute("""
+                INSERT INTO match_results (
+                    history_id, paper_id, title, abstract, authors, categories,
+                    pdf_url, published_date, score, reason, match_type, vector_score, result_order
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                history_id,
+                result.get('paper_id'),
+                result.get('title'),
+                result.get('abstract'),
+                result.get('authors'),
+                result.get('categories'),
+                result.get('pdf_url'),
+                result.get('published_date'),
+                result.get('score'),
+                result.get('reason'),
+                result.get('match_type'),
+                result.get('vector_score'),
+                order
+            ))
+        
+        conn.commit()
+        return history_id
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"保存匹配历史失败: {e}")
+        raise
+    finally:
+        conn.close()
+
+def get_match_history(user_id: Optional[int], page: int = 1, page_size: int = 20) -> dict:
+    """
+    获取匹配历史列表
+    返回: {"total": int, "items": List[dict]}
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 计算总数
+    if user_id:
+        cursor.execute("SELECT COUNT(*) as total FROM match_history WHERE user_id = ?", (user_id,))
+    else:
+        cursor.execute("SELECT COUNT(*) as total FROM match_history")
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    if user_id:
+        cursor.execute("""
+            SELECT * FROM match_history 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (user_id, page_size, offset))
+    else:
+        cursor.execute("""
+            SELECT * FROM match_history 
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (page_size, offset))
+    
+    items = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+def get_match_results_by_history_id(history_id: int) -> List[dict]:
+    """
+    根据历史ID获取匹配结果详情
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM match_results 
+        WHERE history_id = ?
+        ORDER BY result_order ASC
+    """, (history_id,))
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results

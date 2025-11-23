@@ -1,5 +1,5 @@
 """
-匹配服务 - 整合向量搜索和 LLM 评分
+匹配服务 - 整合 Query Expansion + Vector Search + LLM Re-ranking
 """
 import logging
 from typing import List, Dict
@@ -10,89 +10,93 @@ from services.llm_service import get_llm_service
 logger = logging.getLogger(__name__)
 
 async def match_papers(user_requirement: str, top_k: int = 50) -> List[Dict]:
-    """
-    匹配论文的完整流程：
-    1. 将用户需求转换为查询向量
-    2. 在向量数据库中搜索 Top-K 相似论文
-    3. 使用 LLM 对每篇论文进行评分
-    4. 按分数排序返回
-    
-    返回: [{"paper_id": str, "title": str, "abstract": str, "score": float, "reason": str, ...}, ...]
-    """
     try:
-        # 1. 向量搜索
-        logger.info(f"开始向量搜索，需求: {user_requirement[:50]}...")
+        llm_service = get_llm_service()
         vector_service = get_vector_service()
-        similar_papers = vector_service.search_similar(user_requirement, top_k=top_k)
+
+        # ---------------------------------------------------------
+        # 步骤 1: 查询扩展 (Query Expansion) - 提升召回率的关键！
+        # ---------------------------------------------------------
+        logger.info(f"原始需求: {user_requirement}")
+        # 让 LLM 把 "我要做工业质检" 变成 "defect detection, surface anomaly detection, YOLO, CNN..."
+        expanded_query = await llm_service.expand_query(user_requirement)
+        
+        # ---------------------------------------------------------
+        # 步骤 2: 向量搜索 (Coarse Ranking)
+        # ---------------------------------------------------------
+        # 使用扩展后的 query 去搜索，但保留原始 query 用于后续 LLM 评分
+        logger.info(f"使用增强Query进行向量搜索...")
+        similar_papers = vector_service.search_similar(expanded_query, top_k=top_k)
         
         if not similar_papers:
-            logger.warning("未找到相似论文")
             return []
-        
-        # 2. 从数据库获取论文详细信息
+
+        # ---------------------------------------------------------
+        # 步骤 3: 数据填充 (Hydration)
+        # ---------------------------------------------------------
+        paper_ids = [p[0] for p in similar_papers]
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # 优化 SQL：一次性查出所有数据，不再循环查
+        placeholders = ','.join(['?'] * len(paper_ids))
+        query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
+        cursor.execute(query, paper_ids)
+        rows = cursor.fetchall()
+        conn.close()
+
+        # 构建详细列表，保持向量搜索的顺序（因为 SQL 返回顺序是不定的）
+        row_dict = {row["arxiv_id"]: row for row in rows}
         paper_details = []
-        for paper_id, similarity_score in similar_papers:
-            # 尝试通过 arxiv_id 查找
-            cursor.execute("SELECT * FROM papers WHERE arxiv_id = ?", (paper_id,))
-            row = cursor.fetchone()
-            
-            if row:
+        
+        for pid, vec_score in similar_papers:
+            if pid in row_dict:
+                row = row_dict[pid]
                 paper_details.append({
-                    "paper_id": paper_id,
+                    "paper_id": pid,
                     "title": row["title"],
                     "abstract": row["abstract"],
                     "authors": row["authors"],
                     "published_date": row["published_date"],
                     "categories": row["categories"],
                     "pdf_url": row["pdf_url"],
-                    "similarity_score": similarity_score
+                    "vector_score": vec_score # 保留向量分作为参考
                 })
-            else:
-                # 如果找不到，使用向量数据库中的元数据
-                logger.warning(f"论文 {paper_id} 在数据库中不存在，使用向量数据库元数据")
-                # 这里可以从 ChromaDB 获取元数据，但为了简化，我们跳过
-                continue
+
+        # ---------------------------------------------------------
+        # 步骤 4: LLM 精排 (Re-ranking)
+        # ---------------------------------------------------------
+        logger.info(f"开始 LLM 精排，候选数量: {len(paper_details)}")
         
-        conn.close()
-        
-        if not paper_details:
-            logger.warning("未找到论文详细信息")
-            return []
-        
-        # 3. LLM 评分
-        logger.info(f"开始 LLM 评分，共 {len(paper_details)} 篇论文")
-        llm_service = get_llm_service()
-        
-        llm_results = await llm_service.score_papers_batch(
-            user_requirement,
+        # 注意：评分时要用"原始需求"，因为那是用户真正的意图
+        ranked_results = await llm_service.score_papers_batch(
+            user_requirement, 
             paper_details
         )
         
-        # 4. 合并结果并排序
-        # 创建评分字典以便快速查找
-        score_dict = {r["paper_id"]: r for r in llm_results}
+        # 合并详细信息
+        final_output = []
+        detail_map = {p["paper_id"]: p for p in paper_details}
         
-        final_results = []
-        for paper in paper_details:
-            paper_id = paper["paper_id"]
-            if paper_id in score_dict:
-                final_results.append({
+        for res in ranked_results:
+            pid = res["paper_id"]
+            if pid in detail_map:
+                paper = detail_map[pid]
+                final_output.append({
                     **paper,
-                    "score": score_dict[paper_id]["score"],
-                    "reason": score_dict[paper_id]["reason"]
+                    "score": res["score"],   # LLM 给的 0-100 分
+                    "reason": res["reason"], # 犀利点评
+                    "match_type": get_match_label(res["score"]) # 加上标签
                 })
-        
-        # 按 LLM 评分排序（已经排序，但确保）
-        final_results.sort(key=lambda x: x["score"], reverse=True)
-        
-        logger.info(f"匹配完成，返回 {len(final_results)} 篇论文")
-        
-        return final_results
-        
+
+        return final_output
+
     except Exception as e:
-        logger.error(f"匹配论文失败: {str(e)}")
+        logger.error(f"匹配流程异常: {str(e)}")
         raise
 
+def get_match_label(score):
+    if score >= 90: return "S级-完美适配"
+    if score >= 75: return "A级-技术相关"
+    if score >= 60: return "B级-潜在可用"
+    return "C级-参考"
