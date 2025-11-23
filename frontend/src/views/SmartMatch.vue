@@ -89,6 +89,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
 import { Search, FolderOpened, OfficeBuilding } from '@element-plus/icons-vue'
+import api from '../api'
 
 const router = useRouter()
 const route = useRoute()
@@ -314,12 +315,17 @@ const filteredResults = computed(() => {
     return []
   }
   
+  // 后端返回的是论文数据，可以作为成果显示
+  // 企业找成果：显示所有匹配的论文（作为成果）
+  // 专家找需求：也显示所有匹配的论文（因为论文可以转化为需求）
+  // 如果以后有专门的需求数据，可以在这里区分
   if (matchMode.value === 'enterprise') {
-    // 企业找成果：只显示成果
+    // 企业找成果：显示成果类型的结果
     return allMockResults.value.filter(item => item.type === '成果')
   } else if (matchMode.value === 'researcher') {
-    // 专家找需求：只显示需求
-    return allMockResults.value.filter(item => item.type === '需求')
+    // 专家找需求：目前后端只返回论文，暂时也显示成果（论文可以作为需求参考）
+    // 如果以后有专门的需求数据，可以改为：return allMockResults.value.filter(item => item.type === '需求')
+    return allMockResults.value.filter(item => item.type === '成果')
   }
   return allMockResults.value
 })
@@ -386,26 +392,53 @@ const startMatch = async () => {
   // 清除之前保存的状态（新匹配时）
   clearMatchState()
 
-  // 模拟 1.5 秒 Loading
-  await new Promise(resolve => setTimeout(resolve, 1500))
+  try {
+    // 调用后端匹配API
+    const response = await api.post('/matching/match', {
+      requirement: searchText.value,
+      top_k: 50
+    })
 
-  loading.value = false
-  showResults.value = true
-  // 记录当前匹配时的模式
-  currentMatchMode.value = matchMode.value
+    // 将后端返回的论文数据转换为成果格式
+    const papers = response.data.papers || []
+    const convertedResults = papers.map((paper, index) => ({
+      id: paper.paper_id || `paper_${index}`,
+      title: paper.title || '无标题',
+      summary: paper.abstract || paper.desc || '暂无摘要',
+      matchScore: Math.round((paper.score || paper.similarity_score || 0) * 100),
+      type: '成果', // 后端返回的是论文，统一作为成果显示
+      field: paper.categories || '未分类',
+      keywords: paper.categories ? paper.categories.split(',') : [],
+      paper_id: paper.paper_id,
+      pdf_url: paper.pdf_url,
+      reason: paper.reason || ''
+    }))
 
-  // 保存匹配历史
-  saveMatchHistory()
+    // 更新结果数据
+    allMockResults.value = convertedResults
 
-  // 注意：这里不保存临时状态，只有查看合作方案后才保存临时状态
+    loading.value = false
+    showResults.value = true
+    // 记录当前匹配时的模式
+    currentMatchMode.value = matchMode.value
 
-  // 滚动到结果区域
-  setTimeout(() => {
-    const resultsSection = document.querySelector('.results-section')
-    if (resultsSection) {
-      resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, 100)
+    // 保存匹配历史
+    saveMatchHistory()
+
+    ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项`)
+
+    // 滚动到结果区域
+    setTimeout(() => {
+      const resultsSection = document.querySelector('.results-section')
+      if (resultsSection) {
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }, 100)
+  } catch (error) {
+    loading.value = false
+    ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
+    console.error('匹配失败:', error)
+  }
 }
 
 // 获取匹配度颜色

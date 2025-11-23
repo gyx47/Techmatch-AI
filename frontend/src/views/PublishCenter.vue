@@ -242,6 +242,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
+import api from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -303,8 +304,48 @@ const needRules = {
 }
 
 // AI 辅助润色
-const handleAIAssist = (type) => {
-  ElMessage.success('AI正在优化您的文本...')
+const handleAIAssist = async (type) => {
+  let textToOptimize = ''
+  let fieldToUpdate = ''
+  
+  if (type === 'achievement') {
+    textToOptimize = achievementForm.description
+    fieldToUpdate = 'description'
+  } else if (type === 'need') {
+    textToOptimize = needForm.description
+    fieldToUpdate = 'description'
+  }
+  
+  if (!textToOptimize.trim()) {
+    ElMessage.warning('请先输入需要优化的文本')
+    return
+  }
+  
+  try {
+    ElMessage.info('AI正在优化您的文本...')
+    
+    const prompt = type === 'achievement' 
+      ? `请帮我优化以下科研成果描述，使其更加专业、清晰、有吸引力。要求：1. 保持原意不变 2. 使用更专业的学术语言 3. 突出技术特点和创新点 4. 增强可读性。原文：${textToOptimize}`
+      : `请帮我优化以下技术需求描述，使其更加清晰、专业、完整。要求：1. 保持原意不变 2. 使用更专业的表达 3. 明确技术要求和预期目标 4. 增强可读性。原文：${textToOptimize}`
+    
+    const response = await api.post('/ai/chat', {
+      message: prompt,
+      session_id: 'publish_assist'
+    })
+    
+    const optimizedText = response.data.response
+    
+    // 更新对应的表单字段
+    if (type === 'achievement') {
+      achievementForm.description = optimizedText
+    } else {
+      needForm.description = optimizedText
+    }
+    
+    ElMessage.success('AI优化完成！')
+  } catch (error) {
+    ElMessage.error('AI优化失败: ' + (error.response?.data?.detail || error.message))
+  }
 }
 
 // 提交成果
@@ -316,24 +357,40 @@ const submitAchievement = async () => {
 
     submitting.value = true
 
-    // 模拟 1 秒 Loading
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      // 注意：后端目前没有专门的成果发布API
+      // 这里可以保存到本地存储或调用其他API
+      // 暂时使用模拟提交，实际项目中需要添加对应的后端API
+      
+      // 可以保存到 localStorage 作为临时方案
+      const achievements = JSON.parse(localStorage.getItem('achievements') || '[]')
+      achievements.push({
+        ...achievementForm,
+        id: Date.now(),
+        created_at: new Date().toISOString(),
+        type: 'achievement'
+      })
+      localStorage.setItem('achievements', JSON.stringify(achievements))
 
-    submitting.value = false
-    ElMessage.success('成果发布成功！')
+      ElMessage.success('成果发布成功！')
+      
+      // 清空表单
+      Object.assign(achievementForm, {
+        name: '',
+        field: '',
+        description: '',
+        application: '',
+        contact: '',
+        phone: ''
+      })
 
-    // 清空表单
-    Object.assign(achievementForm, {
-      name: '',
-      field: '',
-      description: '',
-      application: '',
-      contact: '',
-      phone: ''
-    })
-
-    // 清除表单验证状态
-    achievementFormRef.value.clearValidate()
+      // 清除表单验证状态
+      achievementFormRef.value.clearValidate()
+    } catch (error) {
+      ElMessage.error('发布失败: ' + (error.message || '未知错误'))
+    } finally {
+      submitting.value = false
+    }
   })
 }
 
@@ -346,24 +403,40 @@ const submitNeed = async () => {
 
     submitting.value = true
 
-    // 模拟 1 秒 Loading
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      // 注意：后端目前没有专门的需求发布API
+      // 这里可以保存到本地存储或调用其他API
+      // 暂时使用模拟提交，实际项目中需要添加对应的后端API
+      
+      // 可以保存到 localStorage 作为临时方案
+      const needs = JSON.parse(localStorage.getItem('needs') || '[]')
+      needs.push({
+        ...needForm,
+        id: Date.now(),
+        created_at: new Date().toISOString(),
+        type: 'need'
+      })
+      localStorage.setItem('needs', JSON.stringify(needs))
 
-    submitting.value = false
-    ElMessage.success('需求发布成功！')
+      ElMessage.success('需求发布成功！')
+      
+      // 清空表单
+      Object.assign(needForm, {
+        title: '',
+        industry: '',
+        description: '',
+        company: '',
+        contact: '',
+        phone: ''
+      })
 
-    // 清空表单
-    Object.assign(needForm, {
-      title: '',
-      industry: '',
-      description: '',
-      company: '',
-      contact: '',
-      phone: ''
-    })
-
-    // 清除表单验证状态
-    needFormRef.value.clearValidate()
+      // 清除表单验证状态
+      needFormRef.value.clearValidate()
+    } catch (error) {
+      ElMessage.error('发布失败: ' + (error.message || '未知错误'))
+    } finally {
+      submitting.value = false
+    }
   })
 }
 </script>
