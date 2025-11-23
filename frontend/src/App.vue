@@ -6,7 +6,7 @@
         <div class="header-content">
           <div class="logo">
             <el-icon><Search /></el-icon>
-            <span>AI论文搜索系统</span>
+            <span>成果需求智能匹配平台</span>
           </div>
           <div class="nav-menu">
             <el-menu
@@ -15,25 +15,26 @@
               router
               class="nav-menu"
             >
-              <el-menu-item index="/">仪表盘</el-menu-item>
-              <el-menu-item index="/new-request">提交需求</el-menu-item>
-              <el-menu-item index="/matches">匹配结果</el-menu-item>
-              <el-menu-item index="/solution/101">方案详情</el-menu-item>
+              <el-menu-item index="/">首页</el-menu-item>
+              <el-menu-item index="/dashboard">资源大厅</el-menu-item>
+              <el-menu-item index="/publish">发布中心</el-menu-item>
+              <el-menu-item index="/smart-match">智能匹配</el-menu-item>
+              <el-menu-item index="/profile">个人中心</el-menu-item>
             </el-menu>
           </div>
           <div class="user-actions">
-            <el-button v-if="!userStore.isLoggedIn" @click="$router.push('/login')">登录</el-button>
-            <el-button v-if="!userStore.isLoggedIn" @click="showRegister = true">
-              注册
-            </el-button>
+            <template v-if="!userStore.isLoggedIn">
+              <el-button @click="$router.push('/login')">登录</el-button>
+              <el-button @click="$router.push('/register')">注册</el-button>
+            </template>
             <el-dropdown v-else>
               <el-button>
-                {{ userStore.userInfo?.username }}
+                {{ userStore.userInfo?.username }} [{{ getRoleText(userStore.userInfo?.role) }}]
                 <el-icon><ArrowDown /></el-icon>
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="logout">退出登录</el-dropdown-item>
+                  <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -46,64 +47,12 @@
         <router-view />
       </el-main>
 
-      <!-- 登录对话框 -->
-      <el-dialog v-model="showLogin" title="用户登录" width="400px">
-        <el-form :model="loginForm" :rules="loginRules" ref="loginFormRef">
-          <el-form-item label="用户名" prop="username">
-            <el-input v-model="loginForm.username" placeholder="请输入用户名" />
-          </el-form-item>
-          <el-form-item label="密码" prop="password">
-            <el-input
-              v-model="loginForm.password"
-              type="password"
-              placeholder="请输入密码"
-              show-password
-            />
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="showLogin = false">取消</el-button>
-          <el-button type="primary" @click="handleLogin">登录</el-button>
-        </template>
-      </el-dialog>
 
-      <!-- 注册对话框 -->
-      <el-dialog v-model="showRegister" title="用户注册" width="400px">
-        <el-form :model="registerForm" :rules="registerRules" ref="registerFormRef">
-          <el-form-item label="用户名" prop="username">
-            <el-input v-model="registerForm.username" placeholder="请输入用户名" />
-          </el-form-item>
-          <el-form-item label="邮箱" prop="email">
-            <el-input v-model="registerForm.email" placeholder="请输入邮箱" />
-          </el-form-item>
-          <el-form-item label="密码" prop="password">
-            <el-input
-              v-model="registerForm.password"
-              type="password"
-              placeholder="请输入密码"
-              show-password
-            />
-          </el-form-item>
-          <el-form-item label="确认密码" prop="confirmPassword">
-            <el-input
-              v-model="registerForm.confirmPassword"
-              type="password"
-              placeholder="请再次输入密码"
-              show-password
-            />
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="showRegister = false">取消</el-button>
-          <el-button type="primary" @click="handleRegister">注册</el-button>
-        </template>
-      </el-dialog>
     </el-container>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
 import { ElMessage } from 'element-plus'
@@ -112,101 +61,19 @@ import { Search, ArrowDown } from '@element-plus/icons-vue'
 const router = useRouter()
 const userStore = useUserStore()
 
-// 对话框状态
-const showLogin = ref(false)
-const showRegister = ref(false)
-
-// 登录表单
-const loginForm = reactive({
-  username: '',
-  password: ''
-})
-
-const loginRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
-}
-
-// 注册表单
-const registerForm = reactive({
-  username: '',
-  email: '',
-  password: '',
-  confirmPassword: ''
-})
-
-const registerRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' }
-  ],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-  confirmPassword: [
-    { required: true, message: '请确认密码', trigger: 'blur' },
-    {
-      validator: (rule, value, callback) => {
-        if (value !== registerForm.password) {
-          callback(new Error('两次输入密码不一致'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur'
-    }
-  ]
-}
-
-// 表单引用
-const loginFormRef = ref()
-const registerFormRef = ref()
-
-// 处理登录
-const handleLogin = async () => {
-  if (!loginFormRef.value) return
-  
-  await loginFormRef.value.validate(async (valid) => {
-    if (valid) {
-      try {
-        await userStore.login(loginForm)
-        ElMessage.success('登录成功')
-        showLogin.value = false
-        loginForm.username = ''
-        loginForm.password = ''
-      } catch (error) {
-        ElMessage.error(error.message || '登录失败')
-      }
-    }
-  })
-}
-
-// 处理注册
-const handleRegister = async () => {
-  if (!registerFormRef.value) return
-  
-  await registerFormRef.value.validate(async (valid) => {
-    if (valid) {
-      try {
-        await userStore.register(registerForm)
-        ElMessage.success('注册成功')
-        showRegister.value = false
-        Object.assign(registerForm, {
-          username: '',
-          email: '',
-          password: '',
-          confirmPassword: ''
-        })
-      } catch (error) {
-        ElMessage.error(error.message || '注册失败')
-      }
-    }
-  })
-}
 
 // 退出登录
 const logout = () => {
   userStore.logout()
   ElMessage.success('已退出登录')
+  router.push('/login')
+}
+
+// 获取角色文本
+const getRoleText = (role) => {
+  if (role === 'researcher') return '科研人员'
+  if (role === 'enterprise') return '企业用户'
+  return '未知'
 }
 </script>
 
