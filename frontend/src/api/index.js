@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 // 创建axios实例
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000,
+  timeout: 300000, // 5分钟超时（匹配服务需要较长时间）
   headers: {
     'Content-Type': 'application/json'
   }
@@ -54,7 +54,12 @@ api.interceptors.response.use(
           ElMessage.error(data?.detail || '请求失败')
       }
     } else if (error.request) {
-      ElMessage.error('网络连接失败，请检查网络')
+      // 检查是否是超时错误
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        ElMessage.error('请求超时，匹配服务可能需要较长时间，请稍后重试')
+      } else {
+        ElMessage.error('网络连接失败，请检查网络')
+      }
     } else {
       ElMessage.error('请求配置错误')
     }

@@ -23,7 +23,9 @@
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" @click="submit">Submit Request</el-button>
+                <el-button type="primary" @click="submit" :loading="submitting">
+                  {{ submitting ? '提交中...' : 'Submit Request' }}
+                </el-button>
               </el-form-item>
             </el-form>
           </div>
@@ -34,16 +36,45 @@
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import api from '../api'
 
 const router = useRouter()
 const form = reactive({ title: '', description: '', keywords: [] })
+const submitting = ref(false)
 
-const submit = () => {
-  if (!form.title) return ElMessage.warning('请填写标题')
-  router.push({ name: 'MatchingResults', query: { q: form.keywords.join(',') } })
+const submit = async () => {
+  if (!form.description || !form.description.trim()) {
+    return ElMessage.warning('请填写详细描述')
+  }
+  
+  submitting.value = true
+  try {
+    // 构建需求文本：标题 + 描述 + 关键词
+    const requirement = [
+      form.title && `标题: ${form.title}`,
+      `需求描述: ${form.description}`,
+      form.keywords.length > 0 && `关键词: ${form.keywords.join(', ')}`
+    ].filter(Boolean).join('\n\n')
+    
+    // 调用匹配API
+    const response = await api.post('/matching/match', {
+      requirement: requirement,
+      top_k: 50
+    })
+    
+    ElMessage.success(`匹配完成！找到 ${response.data.total || 0} 篇相关论文，正在跳转到结果页面...`)
+    
+    // 将匹配结果存储到sessionStorage，然后跳转
+    sessionStorage.setItem('matchingResults', JSON.stringify(response.data))
+    router.push({ name: 'MatchingResults' })
+  } catch (error) {
+    ElMessage.error('提交失败: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    submitting.value = false
+  }
 }
 </script>
 

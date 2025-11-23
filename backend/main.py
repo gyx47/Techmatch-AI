@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 # 导入路由
-from api.routes import auth, papers, ai, crawler
+from api.routes import auth, papers, ai, crawler, matching
 from database.database import init_db
 
 # 创建FastAPI应用实例
@@ -36,6 +36,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(papers.router, prefix="/api/papers", tags=["论文"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(crawler.router, prefix="/api/crawler", tags=["爬虫"])
+app.include_router(matching.router, prefix="/api/matching", tags=["匹配"])
 
 # 静态文件服务
 frontend_path = Path(__file__).parent.parent / "frontend" / "dist"

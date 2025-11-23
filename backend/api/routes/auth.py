@@ -4,18 +4,23 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+from typing import Optional
 import hashlib
 import jwt
 from datetime import datetime, timedelta
+import os
 from database.database import get_user_by_username, get_user_by_email, create_user
 
 router = APIRouter()
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)  # 允许可选认证
 
 # JWT配置
 SECRET_KEY = "your-secret-key-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# 开发模式：允许跳过认证
+DEBUG_MODE = os.getenv("DEBUG", "False").lower() == "true"
 
 class UserRegister(BaseModel):
     username: str
@@ -56,6 +61,25 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         return username
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="无效的认证凭据")
+
+def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """
+    可选认证：开发模式下允许跳过认证
+    生产环境请使用 get_current_user
+    """
+    if DEBUG_MODE:
+        # 开发模式：如果没有提供 token，返回默认用户
+        if credentials and credentials.credentials:
+            try:
+                return get_current_user(credentials)
+            except:
+                pass
+        return "debug_user"
+    else:
+        # 生产模式：必须认证
+        if not credentials or not credentials.credentials:
+            raise HTTPException(status_code=401, detail="需要认证")
+        return get_current_user(credentials)
 
 @router.post("/register", response_model=Token)
 async def register(user_data: UserRegister):
