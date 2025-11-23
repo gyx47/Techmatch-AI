@@ -6,3 +6,5 @@ run.py
 papers.db
 **/node_modules
 **/dist
+backend/scripts/
+chroma_db
