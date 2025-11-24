@@ -55,8 +55,10 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { UserFilled } from '@element-plus/icons-vue'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const formRef = ref()
@@ -96,13 +98,25 @@ const onSubmit = async () => {
     if (!valid) return
     try {
       loading.value = true
-      // 暂时不调用后端 API，直接显示成功消息并跳转
+      // 调用后端注册API
+      await userStore.register({
+        username: form.username,
+        email: form.email,
+        password: form.password
+      })
+      
+      // 保存角色信息到用户信息中（前端使用，不发送给后端）
+      if (userStore.userInfo) {
+        userStore.userInfo.role = form.role
+        localStorage.setItem('userInfo', JSON.stringify(userStore.userInfo))
+      }
+      
       ElMessage.success('注册成功')
-      setTimeout(() => {
-        router.push('/login')
-      }, 1000)
+      // 注册成功后跳转到首页或之前访问的页面
+      const redirect = router.currentRoute.value.query.redirect || '/'
+      router.replace(redirect)
     } catch (e) {
-      ElMessage.error(e?.message || '注册失败')
+      ElMessage.error(e?.message || '注册失败，请检查后端服务是否运行')
     } finally {
       loading.value = false
     }
