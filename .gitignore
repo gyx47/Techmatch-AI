@@ -8,3 +8,4 @@ papers.db
 **/dist
 backend/scripts/
 chroma_db
+*.md

@@ -35,21 +35,31 @@ class LLMService:
         json_config = {"response_format": {"type": "json_object"}} if force_json else {}
             
         async with httpx.AsyncClient(timeout=60.0) as client:  # Listwise 可能需要更长时间
+            request_body = {
+                "model": "deepseek-chat",
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                **json_config
+            }
+            
             response = await client.post(
                 self.api_base,
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json"
                 },
-                json={
-                    "model": "deepseek-chat",
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    **json_config
-                }
+                json=request_body
             )
-            response.raise_for_status()
+            
+            # 如果请求失败，记录详细的错误信息
+            if response.status_code != 200:
+                error_detail = response.text
+                logger.error(f"DeepSeek API 请求失败: {response.status_code}")
+                logger.error(f"请求体: {request_body}")
+                logger.error(f"错误详情: {error_detail}")
+                response.raise_for_status()
+            
             return response.json()["choices"][0]["message"]["content"]
 
     async def expand_query(self, user_requirement: str) -> str:
@@ -71,7 +81,12 @@ class LLMService:
         """
         try:
             # 使用简单的 prompt 快速生成
-            content = await self._call_deepseek([{"role": "user", "content": prompt}], temperature=0.7)
+            # force_json=False 因为返回的是纯文本，不是 JSON
+            content = await self._call_deepseek(
+                [{"role": "user", "content": prompt}], 
+                temperature=0.7,
+                force_json=False
+            )
             logger.info(f"查询扩展: {user_requirement} -> {content[:50]}...")
             return content
         except Exception as e:
@@ -111,7 +126,7 @@ class LLMService:
 请先在内心进行批判性思考（Chain of Thought），然后输出 JSON：
 {{
     "score": <int 0-100>,
-    "reason": "<一句话犀利点评，指出最大的亮点或最大的缺陷>"
+    "reason": "<结合论文和需求非常详细的点评，指出最大的亮点或最大的缺陷，并给出具体的结合建议，这个技术在整个需求工程化中的作用>"
 }}
 """
         try:
@@ -157,7 +172,7 @@ class LLMService:
 ---
 """
         
-        system_prompt = """你是一位严苛的企业技术转移专家。你需要同时评估多篇候选论文，通过对比分析给出相对准确的评分。"""
+        system_prompt = """你是一位严苛的企业技术转移专家。你的任务是评估一篇学术论文是否具备转化为企业解决方案的潜力。你需要同时评估多篇候选论文，通过对比分析给出相对准确的评分。"""
         
         user_prompt = f"""
 ### 评估任务
@@ -171,18 +186,18 @@ class LLMService:
 请仔细对比这 {len(papers_batch)} 篇论文，根据它们与用户需求的匹配度进行评分。
 
 **评分标准 (0-100分)**：
-- **[90-100] 完美适配 (S级)**: 直接解决痛点，技术成熟可落地
-- **[75-89] 技术强相关 (A级)**: 核心算法对口，需要一定迁移成本
-- **[40-74] 理论相关 (B级)**: 同一领域但任务不匹配，或偏理论
-- **[0-39] 噪音/不相关 (C级)**: 关键词匹配但解决完全不同的问题
+- **[90-100] 完美适配 (S级)**: 论文的方法直接解决了该痛点，且技术路线成熟（如已有代码实现、工业数据集验证），几乎可以直接落地。
+- **[75-89] 技术强相关 (A级)**:  核心算法对口，但场景可能不同（例如：需求是工业质检，论文是医学影像检测，但方法通用），需要一定的迁移成本。
+- **[40-74] 理论相关 (B级)**: 属于同一大领域（如都是CV），但具体任务不匹配，或者论文太偏纯理论，落地难度大。
+- **[0-39] 噪音/不相关 (C级)**: 关键词虽然匹配（如都有"AI"），但解决的是完全不同的问题。
 
 **重要**：请通过对比分析，给出有区分度的分数，避免所有论文分数相同。
 
 ### 输出格式
 请返回 JSON 数组，每篇论文包含 id, score, reason：
 [
-    {{"id": "论文ID", "score": 85, "reason": "简短点评"}},
-    {{"id": "论文ID", "score": 60, "reason": "简短点评"}}
+    {{"id": "论文ID", "score": 85, "reason": "结合论文和需求非常详细的点评，指出最大的亮点或最大的缺陷，并给出具体的结合建议，这个技术在整个需求工程化中的作用"}},
+    {{"id": "论文ID", "score": 60, "reason": "结合论文和需求非常详细的点评，指出最大的亮点或最大的缺陷，并给出具体的结合建议，这个技术在整个需求工程化中的作用"}}
 ]
 """
         
@@ -267,7 +282,7 @@ class LLMService:
         # ===== 方案 A：截断策略 =====
         # 向量搜索已经做了初步排序，通常前 20 篇最有价值
         # 只对前 20 篇进行 LLM 精排，节省 API 调用成本
-        top_n = 20
+        top_n = 40
         target_papers = papers[:top_n]
         
         logger.info(f"向量召回 {len(papers)} 篇，仅对前 {len(target_papers)} 篇进行 LLM 精排")
