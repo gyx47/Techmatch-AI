@@ -9,3 +9,6 @@ papers.db
 backend/scripts/
 chroma_db
 *.md
+技术-assets/
+技术.md
+技术.pdf

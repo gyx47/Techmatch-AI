@@ -282,7 +282,7 @@ class LLMService:
         # ===== 方案 A：截断策略 =====
         # 向量搜索已经做了初步排序，通常前 20 篇最有价值
         # 只对前 20 篇进行 LLM 精排，节省 API 调用成本
-        top_n = 40
+        top_n = 5
         target_papers = papers[:top_n]
         
         logger.info(f"向量召回 {len(papers)} 篇，仅对前 {len(target_papers)} 篇进行 LLM 精排")
