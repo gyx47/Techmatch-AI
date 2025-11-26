@@ -6,8 +6,6 @@
 
       <!-- 操作按钮区域 -->
       <div class="actions">
-        <el-button type="primary" @click="$router.push('/new-request')">提交新需求</el-button>
-        <el-button @click="$router.push('/matches')">查看所有匹配</el-button>
         <el-button 
           type="success" 
           @click="showCrawlerDialog = true" 
