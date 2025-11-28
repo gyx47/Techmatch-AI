@@ -86,15 +86,6 @@
                     placeholder="请详细描述您的科研成果，包括技术特点、创新点、应用价值等..."
                     :disabled="submitting"
                   />
-                  <el-button
-                    type="text"
-                    class="ai-assist-btn"
-                    @click="handleAIAssist('achievement')"
-                    :disabled="submitting"
-                  >
-                    <span class="sparkle">✨</span>
-                    AI 辅助润色
-                  </el-button>
                 </el-form-item>
 
                 <el-form-item label="应用场景" prop="application">
@@ -182,15 +173,6 @@
                     placeholder="请详细描述您的技术需求，包括具体需求、技术要求、预期目标等..."
                     :disabled="submitting"
                   />
-                  <el-button
-                    type="text"
-                    class="ai-assist-btn"
-                    @click="handleAIAssist('need')"
-                    :disabled="submitting"
-                  >
-                    <span class="sparkle">✨</span>
-                    AI 辅助润色
-                  </el-button>
                 </el-form-item>
 
                 <el-form-item label="企业名称" prop="company">
@@ -242,7 +224,6 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import api from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -301,51 +282,6 @@ const needRules = {
     { required: true, message: '请输入联系电话', trigger: 'blur' },
     { pattern: /^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$/, message: '请输入正确的电话号码', trigger: 'blur' }
   ]
-}
-
-// AI 辅助润色
-const handleAIAssist = async (type) => {
-  let textToOptimize = ''
-  let fieldToUpdate = ''
-  
-  if (type === 'achievement') {
-    textToOptimize = achievementForm.description
-    fieldToUpdate = 'description'
-  } else if (type === 'need') {
-    textToOptimize = needForm.description
-    fieldToUpdate = 'description'
-  }
-  
-  if (!textToOptimize.trim()) {
-    ElMessage.warning('请先输入需要优化的文本')
-    return
-  }
-  
-  try {
-    ElMessage.info('AI正在优化您的文本...')
-    
-    const prompt = type === 'achievement' 
-      ? `请帮我优化以下科研成果描述，使其更加专业、清晰、有吸引力。要求：1. 保持原意不变 2. 使用更专业的学术语言 3. 突出技术特点和创新点 4. 增强可读性。原文：${textToOptimize}`
-      : `请帮我优化以下技术需求描述，使其更加清晰、专业、完整。要求：1. 保持原意不变 2. 使用更专业的表达 3. 明确技术要求和预期目标 4. 增强可读性。原文：${textToOptimize}`
-    
-    const response = await api.post('/ai/chat', {
-      message: prompt,
-      session_id: 'publish_assist'
-    })
-    
-    const optimizedText = response.data.response
-    
-    // 更新对应的表单字段
-    if (type === 'achievement') {
-      achievementForm.description = optimizedText
-    } else {
-      needForm.description = optimizedText
-    }
-    
-    ElMessage.success('AI优化完成！')
-  } catch (error) {
-    ElMessage.error('AI优化失败: ' + (error.response?.data?.detail || error.message))
-  }
 }
 
 // 提交成果
@@ -518,22 +454,6 @@ const submitNeed = async () => {
   margin: 0 0 24px 0;
   padding-bottom: 12px;
   border-bottom: 2px solid #e5e7eb;
-}
-
-.ai-assist-btn {
-  margin-top: 8px;
-  color: #667eea;
-  font-size: 14px;
-  padding: 0;
-}
-
-.ai-assist-btn:hover {
-  color: #764ba2;
-}
-
-.sparkle {
-  margin-right: 4px;
-  font-size: 16px;
 }
 
 :deep(.el-form-item__label) {

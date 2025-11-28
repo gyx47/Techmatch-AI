@@ -18,21 +18,10 @@
         <el-button type="primary" class="submit" :loading="loading" @click="onSubmit">登录</el-button>
       </el-form>
 
-      <el-divider>或</el-divider>
-
-      <div class="quick-login">
-        <p class="quick-login-title">快速体验（无需后端）</p>
-        <div class="quick-login-buttons">
-          <el-button @click="quickLogin('researcher')" class="quick-btn">
-            以科研人员身份登录
-          </el-button>
-          <el-button @click="quickLogin('enterprise')" class="quick-btn">
-            以企业用户身份登录
-          </el-button>
-        </div>
+      <div class="tips">
+        没有账号？
+        <el-link type="primary" @click="$router.push('/register')">立即注册</el-link>
       </div>
-
-      <div class="tips">没有账号？可先用任意用户名注册于右上角弹窗，或使用临时账号。</div>
     </div>
   </div>
 </template>
@@ -74,17 +63,6 @@ const onSubmit = async () => {
   })
 }
 
-// 快速登录（使用 mockLogin）
-const quickLogin = (role) => {
-  try {
-    userStore.mockLogin(role)
-    ElMessage.success(`已以${role === 'researcher' ? '科研人员' : '企业用户'}身份登录`)
-    const redirect = (route.query.redirect || '/').toString()
-    router.replace(redirect)
-  } catch (e) {
-    ElMessage.error(e?.message || '快速登录失败')
-  }
-}
 </script>
 
 <style scoped>
@@ -97,34 +75,12 @@ const quickLogin = (role) => {
 .subtitle { color:#6b7280; margin-bottom: 18px; }
 .submit { width: 100%; margin-top: 6px; }
 
-.quick-login {
-  margin-top: 20px;
-  padding-top: 20px;
+.tips { 
+  color:#9ca3af; 
+  font-size: 12px; 
+  text-align:center; 
+  margin-top: 20px; 
 }
-
-.quick-login-title {
-  font-size: 13px;
-  color: #6b7280;
-  text-align: center;
-  margin: 0 0 12px 0;
-}
-
-.quick-login-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.quick-btn {
-  flex: 1;
-}
-
-:deep(.el-divider__text) {
-  background: #fff;
-  color: #9ca3af;
-  font-size: 12px;
-}
-
-.tips { color:#9ca3af; font-size: 12px; text-align:center; margin-top: 10px; }
 </style>
 
 

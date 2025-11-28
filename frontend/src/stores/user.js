@@ -67,25 +67,6 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('userInfo')
   }
 
-  // 模拟登录（用于测试和开发）
-  const mockLogin = (role) => {
-    if (role !== 'researcher' && role !== 'enterprise') {
-      throw new Error('role 必须是 "researcher" 或 "enterprise"')
-    }
-    
-    const mockToken = `mock_token_${role}_${Date.now()}`
-    const mockUserInfo = {
-      username: 'DemoUser',
-      role: role,
-      email: 'demo@test.com'
-    }
-    
-    token.value = mockToken
-    userInfo.value = mockUserInfo
-    localStorage.setItem('token', mockToken)
-    localStorage.setItem('userInfo', JSON.stringify(mockUserInfo))
-  }
-
   return {
     token,
     userInfo,
@@ -93,7 +74,6 @@ export const useUserStore = defineStore('user', () => {
     login,
     register,
     getUserInfo,
-    logout,
-    mockLogin
+    logout
   }
 })

@@ -342,27 +342,39 @@ async def get_match_history_results(
 ):
     """
     根据历史ID获取匹配结果详情
+    必须验证历史记录属于当前用户
     """
     try:
-        # 验证历史记录是否属于当前用户
+        # 获取用户ID
         user = get_user_by_username(current_user)
-        user_id = user["id"] if user else None
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
         
-        # 检查历史记录是否存在且属于当前用户
+        user_id = user["id"]
+        
+        # 检查历史记录是否存在且属于当前用户（必须验证用户ID）
         conn = get_db_connection()
         cursor = conn.cursor()
-        if user_id:
-            cursor.execute("SELECT * FROM match_history WHERE id = ? AND user_id = ?", (history_id, user_id))
-        else:
-            cursor.execute("SELECT * FROM match_history WHERE id = ?", (history_id,))
+        cursor.execute("SELECT * FROM match_history WHERE id = ? AND user_id = ?", (history_id, user_id))
         history = cursor.fetchone()
         conn.close()
         
         if not history:
-            raise HTTPException(status_code=404, detail="匹配历史不存在")
+            raise HTTPException(status_code=404, detail="匹配历史不存在或无权限访问")
         
         # 获取匹配结果
         results = get_match_results_by_history_id(history_id)
+        
+        # 如果没有匹配结果，返回空列表而不是错误
+        if not results:
+            return {
+                "history_id": history_id,
+                "search_desc": history["search_desc"],
+                "match_mode": history["match_mode"],
+                "match_time": history["created_at"],
+                "papers": [],
+                "total": 0
+            }
         
         # 转换为前端需要的格式
         papers = []

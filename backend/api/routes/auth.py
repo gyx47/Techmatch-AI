@@ -26,6 +26,7 @@ class UserRegister(BaseModel):
     username: str
     email: str
     password: str
+    role: str 
 
 class UserLogin(BaseModel):
     username: str
@@ -92,9 +93,13 @@ async def register(user_data: UserRegister):
     if get_user_by_email(user_data.email):
         raise HTTPException(status_code=400, detail="邮箱已存在")
     
+    # 验证角色值是否选择
+    if not user_data.role or user_data.role.strip() == '':
+        raise HTTPException(status_code=400, detail="请选择您的身份（科研人员或企业用户）")
+    
     # 创建用户
     password_hash = hash_password(user_data.password)
-    user_id = create_user(user_data.username, user_data.email, password_hash)
+    user_id = create_user(user_data.username, user_data.email, password_hash, user_data.role)
     
     # 创建访问令牌
     access_token = create_access_token(data={"sub": user_data.username})
@@ -122,5 +127,6 @@ async def get_current_user_info(current_user: str = Depends(get_current_user)):
         "id": user["id"],
         "username": user["username"],
         "email": user["email"],
+        "role": user.get("role", "researcher"),  # 兼容旧数据，默认返回 researcher
         "created_at": user["created_at"]
     }

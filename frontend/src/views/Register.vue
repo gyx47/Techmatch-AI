@@ -98,18 +98,13 @@ const onSubmit = async () => {
     if (!valid) return
     try {
       loading.value = true
-      // 调用后端注册API
+      // 调用后端注册API（包含角色信息）
       await userStore.register({
         username: form.username,
         email: form.email,
-        password: form.password
+        password: form.password,
+        role: form.role
       })
-      
-      // 保存角色信息到用户信息中（前端使用，不发送给后端）
-      if (userStore.userInfo) {
-        userStore.userInfo.role = form.role
-        localStorage.setItem('userInfo', JSON.stringify(userStore.userInfo))
-      }
       
       ElMessage.success('注册成功')
       // 注册成功后跳转到首页或之前访问的页面

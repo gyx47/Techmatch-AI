@@ -32,10 +32,18 @@ def init_db():
                 username VARCHAR(50) UNIQUE NOT NULL,
                 email VARCHAR(100) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
+                role VARCHAR(20) DEFAULT 'researcher',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # 如果表已存在但没有 role 字段，添加该字段
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'researcher'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 字段已存在，忽略错误
         
         # 创建论文表
         cursor.execute("""
@@ -138,13 +146,13 @@ def get_user_by_email(email: str) -> Optional[dict]:
     conn.close()
     return dict(user) if user else None
 
-def create_user(username: str, email: str, password_hash: str) -> int:
+def create_user(username: str, email: str, password_hash: str, role: str = 'researcher') -> int:
     """创建新用户"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-        (username, email, password_hash)
+        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        (username, email, password_hash, role)
     )
     user_id = cursor.lastrowid
     conn.commit()
@@ -264,32 +272,33 @@ def get_match_history(user_id: Optional[int], page: int = 1, page_size: int = 20
     """
     获取匹配历史列表
     返回: {"total": int, "items": List[dict]}
+    注意：如果 user_id 为 None，返回空列表（不允许查看所有用户的历史）
     """
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # 如果 user_id 为 None，返回空列表（安全考虑）
+    if user_id is None:
+        conn.close()
+        return {
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "items": []
+        }
+    
     # 计算总数
-    if user_id:
-        cursor.execute("SELECT COUNT(*) as total FROM match_history WHERE user_id = ?", (user_id,))
-    else:
-        cursor.execute("SELECT COUNT(*) as total FROM match_history")
+    cursor.execute("SELECT COUNT(*) as total FROM match_history WHERE user_id = ?", (user_id,))
     total = cursor.fetchone()['total']
     
     # 获取分页数据
     offset = (page - 1) * page_size
-    if user_id:
-        cursor.execute("""
-            SELECT * FROM match_history 
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
-        """, (user_id, page_size, offset))
-    else:
-        cursor.execute("""
-            SELECT * FROM match_history 
-            ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
-        """, (page_size, offset))
+    cursor.execute("""
+        SELECT * FROM match_history 
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """, (user_id, page_size, offset))
     
     items = [dict(row) for row in cursor.fetchall()]
     conn.close()
