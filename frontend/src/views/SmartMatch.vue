@@ -40,69 +40,260 @@
     <!-- 匹配结果区域 -->
     <div class="results-section" v-if="showResults">
       <div class="container">
-        <h2 class="results-title">匹配结果</h2>
-        <p class="results-subtitle">为您找到 {{ filteredResults.length }} 个匹配项</p>
+        <div class="results-header">
+          <div>
+            <h2 class="results-title">匹配结果</h2>
+            <p class="results-subtitle">为您找到 {{ filteredResults.length }} 个匹配项</p>
+          </div>
+          <div class="action-buttons" v-if="selectedPapers.length > 0">
+            <el-button 
+              type="success" 
+              size="large"
+              :loading="generatingPath"
+              @click="generateImplementationPath"
+            >
+              <el-icon><Document /></el-icon>
+              生成实现路径 (已选 {{ selectedPapers.length }} 篇)
+            </el-button>
+            <el-button @click="clearSelection" size="large">
+              清空选择
+            </el-button>
+          </div>
+        </div>
 
-        <el-row :gutter="20">
+        <el-row :gutter="24">
           <el-col :span="8" v-for="item in filteredResults" :key="item.id">
-            <div class="card">
-              <div class="card-header">
-                <h3>{{ item.title }}</h3>
+            <div class="paper-card" :class="{ 'selected': isPaperSelected(item.paper_id) }">
+              <div class="card-checkbox-wrapper">
+                <el-checkbox 
+                  v-model="selectedPaperIds" 
+                  :value="item.paper_id"
+                  @change="handlePaperSelection(item.paper_id, $event)"
+                  class="paper-checkbox"
+                  size="large"
+                />
               </div>
-              <div class="card-body">
-                <div class="summary-content" v-html="highlightKeywords(item.summary)"></div>
-                
-                <!-- 推荐理由 -->
-                <div class="reason-section" v-if="item.reason">
-                  <div class="reason-label">推荐理由：</div>
-                  <div class="reason-text">{{ item.reason }}</div>
+              <div class="card-content">
+                <div class="card-header">
+                  <h3 class="paper-title">{{ item.title }}</h3>
                 </div>
-                
-                <div class="confidence">
-                  <div class="score-header">
-                    <span>匹配度</span>
-                    <el-tag v-if="item.match_type" :type="getMatchTypeTagType(item.match_type)" size="small">
-                      {{ item.match_type }}
-                    </el-tag>
+                <div class="card-body">
+                  <div class="summary-content" v-html="highlightKeywords(item.summary)"></div>
+                  
+                  <!-- 推荐理由 -->
+                  <div class="reason-section" v-if="item.reason">
+                    <div class="reason-label">
+                      <el-icon><Lightbulb /></el-icon>
+                      推荐理由
+                    </div>
+                    <div class="reason-text">{{ item.reason }}</div>
                   </div>
-                  <el-progress
-                    :percentage="item.matchScore"
-                    :color="getScoreColor(item.matchScore)"
-                    :stroke-width="10"
-                    :status="item.matchScore >= 90 ? 'success' : item.matchScore >= 75 ? 'warning' : ''"
-                  />
+                  
+                  <div class="confidence-section">
+                    <div class="score-header">
+                      <span class="score-label">匹配度</span>
+                      <el-tag v-if="item.match_type" :type="getMatchTypeTagType(item.match_type)" size="small" effect="dark">
+                        {{ item.match_type }}
+                      </el-tag>
+                    </div>
+                    <el-progress
+                      :percentage="item.matchScore"
+                      :color="getScoreColor(item.matchScore)"
+                      :stroke-width="8"
+                      :status="item.matchScore >= 90 ? 'success' : item.matchScore >= 75 ? 'warning' : ''"
+                      :show-text="true"
+                      :format="(percentage) => `${percentage}%`"
+                    />
+                  </div>
+                  
+                  <div class="card-meta">
+                    <el-tag v-if="item.type" :type="item.type === '成果' ? 'success' : 'primary'" size="small" effect="plain">
+                      {{ item.type }}
+                    </el-tag>
+                    <span class="meta-item" v-if="item.field">
+                      <el-icon><FolderOpened /></el-icon>
+                      {{ item.field }}
+                    </span>
+                    <span class="meta-item" v-if="item.authors">
+                      <el-icon><User /></el-icon>
+                      {{ item.authors.split(',').slice(0, 2).join(',') }}{{ item.authors.split(',').length > 2 ? '等' : '' }}
+                    </span>
+                    <span class="meta-item" v-if="item.published_date">
+                      <el-icon><Calendar /></el-icon>
+                      {{ formatDate(item.published_date) }}
+                    </span>
+                  </div>
                 </div>
-                
-                <div class="card-meta">
-                  <el-tag v-if="item.type" :type="item.type === '成果' ? 'success' : 'primary'" size="small">
-                    {{ item.type }}
-                  </el-tag>
-                  <span class="meta-item" v-if="item.field">
-                    <el-icon><FolderOpened /></el-icon>
-                    {{ item.field }}
-                  </span>
-                  <span class="meta-item" v-if="item.authors">
-                    <el-icon><User /></el-icon>
-                    {{ item.authors.split(',').slice(0, 2).join(',') }}{{ item.authors.split(',').length > 2 ? '等' : '' }}
-                  </span>
-                  <span class="meta-item" v-if="item.published_date">
-                    {{ formatDate(item.published_date) }}
-                  </span>
+                <div class="card-footer">
+                  <el-button type="primary" size="default" @click="viewProposal(item.id)" plain>
+                    <el-icon><Document /></el-icon>
+                    查看方案
+                  </el-button>
+                  <el-button v-if="item.pdf_url" @click="openPdf(item.pdf_url)" link type="primary">
+                    <el-icon><Document /></el-icon>
+                    查看PDF
+                  </el-button>
                 </div>
-              </div>
-              <div class="card-footer">
-                <el-button type="primary" @click="viewProposal(item.id)">
-                  查看合作方案
-                </el-button>
-                <el-button v-if="item.pdf_url" @click="openPdf(item.pdf_url)" link>
-                  查看PDF
-                </el-button>
               </div>
             </div>
           </el-col>
         </el-row>
       </div>
     </div>
+
+    <!-- 实现路径对话框 -->
+    <el-dialog
+      v-model="showPathDialog"
+      title="科研成果实现路径"
+      width="80%"
+      :close-on-click-modal="false"
+      class="implementation-path-dialog"
+    >
+      <div v-if="pathLoading" class="path-loading">
+        <el-skeleton :rows="10" animated />
+      </div>
+      <div v-else-if="implementationPath" class="path-content">
+        <!-- 整体概述 -->
+        <div class="path-section" v-if="implementationPath.overview">
+          <h3>📋 整体概述</h3>
+          <p>{{ implementationPath.overview }}</p>
+        </div>
+
+        <!-- 技术选型 -->
+        <div class="path-section" v-if="implementationPath.technology_selection">
+          <h3>🔧 技术选型</h3>
+          <div class="tech-selection">
+            <div v-if="implementationPath.technology_selection.primary_techniques">
+              <strong>主要技术：</strong>
+              <el-tag 
+                v-for="tech in implementationPath.technology_selection.primary_techniques" 
+                :key="tech"
+                type="success"
+                style="margin: 5px"
+              >
+                {{ tech }}
+              </el-tag>
+            </div>
+            <p v-if="implementationPath.technology_selection.integration_strategy" style="margin-top: 10px">
+              <strong>整合策略：</strong>{{ implementationPath.technology_selection.integration_strategy }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 实施阶段 -->
+        <div class="path-section" v-if="implementationPath.implementation_phases">
+          <h3>📅 实施阶段</h3>
+          <el-timeline>
+            <el-timeline-item
+              v-for="phase in implementationPath.implementation_phases"
+              :key="phase.phase"
+              :timestamp="phase.estimated_time"
+              placement="top"
+            >
+              <el-card>
+                <h4>{{ phase.name }}</h4>
+                <div v-if="phase.objectives">
+                  <strong>目标：</strong>
+                  <ul>
+                    <li v-for="obj in phase.objectives" :key="obj">{{ obj }}</li>
+                  </ul>
+                </div>
+                <div v-if="phase.deliverables" style="margin-top: 10px">
+                  <strong>交付物：</strong>
+                  <ul>
+                    <li v-for="del in phase.deliverables" :key="del">{{ del }}</li>
+                  </ul>
+                </div>
+                <div v-if="phase.key_tasks" style="margin-top: 10px">
+                  <strong>关键任务：</strong>
+                  <el-tag 
+                    v-for="task in phase.key_tasks" 
+                    :key="task"
+                    style="margin: 3px"
+                  >
+                    {{ task }}
+                  </el-tag>
+                </div>
+              </el-card>
+            </el-timeline-item>
+          </el-timeline>
+        </div>
+
+        <!-- 风险评估 -->
+        <div class="path-section" v-if="implementationPath.risk_assessment">
+          <h3>⚠️ 风险评估</h3>
+          <div class="risk-assessment">
+            <div v-if="implementationPath.risk_assessment.technical_risks">
+              <strong>技术风险：</strong>
+              <ul>
+                <li v-for="risk in implementationPath.risk_assessment.technical_risks" :key="risk">{{ risk }}</li>
+              </ul>
+            </div>
+            <div v-if="implementationPath.risk_assessment.mitigation_strategies" style="margin-top: 10px">
+              <strong>应对策略：</strong>
+              <ul>
+                <li v-for="strategy in implementationPath.risk_assessment.mitigation_strategies" :key="strategy">{{ strategy }}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- 成功标准 -->
+        <div class="path-section" v-if="implementationPath.success_criteria">
+          <h3>✅ 成功标准</h3>
+          <ul>
+            <li v-for="criteria in implementationPath.success_criteria" :key="criteria">{{ criteria }}</li>
+          </ul>
+        </div>
+
+        <!-- 论文分析详情 -->
+        <div class="path-section" v-if="papersAnalysis && papersAnalysis.length > 0">
+          <h3>📄 论文分析详情</h3>
+          <el-collapse>
+            <el-collapse-item
+              v-for="(paper, index) in papersAnalysis"
+              :key="index"
+              :title="paper.title"
+            >
+              <div v-if="paper.status === 'success' && paper.analysis">
+                <div v-if="paper.analysis.core_techniques">
+                  <strong>核心技术：</strong>
+                  <el-tag 
+                    v-for="tech in paper.analysis.core_techniques" 
+                    :key="tech"
+                    style="margin: 3px"
+                  >
+                    {{ tech }}
+                  </el-tag>
+                </div>
+                <p v-if="paper.analysis.summary" style="margin-top: 10px">
+                  <strong>总结：</strong>{{ paper.analysis.summary }}
+                </p>
+                <p v-if="paper.analysis.key_implementation_details" style="margin-top: 10px">
+                  <strong>实现细节：</strong>{{ paper.analysis.key_implementation_details }}
+                </p>
+                <p v-if="paper.analysis.technical_advantages" style="margin-top: 10px">
+                  <strong>技术优势：</strong>{{ paper.analysis.technical_advantages }}
+                </p>
+                <p v-if="paper.analysis.implementation_challenges" style="margin-top: 10px">
+                  <strong>实现难点：</strong>{{ paper.analysis.implementation_challenges }}
+                </p>
+              </div>
+              <div v-else>
+                <el-alert :title="paper.error_message || '分析失败'" type="error" />
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+      </div>
+      <div v-else-if="pathError" class="path-error">
+        <el-alert :title="pathError" type="error" />
+      </div>
+      <template #footer>
+        <el-button @click="showPathDialog = false">关闭</el-button>
+        <el-button type="primary" @click="exportPath">导出路径</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -111,7 +302,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import { Search, FolderOpened, OfficeBuilding, User } from '@element-plus/icons-vue'
+import { Search, FolderOpened, OfficeBuilding, User, Document, Lightbulb, Calendar } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
@@ -123,6 +314,19 @@ const matchMode = ref('enterprise')
 const loading = ref(false)
 const showResults = ref(false)
 const currentMatchMode = ref(null) // 记录当前匹配时的模式
+const currentHistoryId = ref(null) // 当前匹配的历史ID
+
+// 论文选择和实现路径相关
+const selectedPaperIds = ref([])
+const selectedPapers = computed(() => {
+  return matchResults.value.filter(item => selectedPaperIds.value.includes(item.paper_id))
+})
+const generatingPath = ref(false)
+const showPathDialog = ref(false)
+const pathLoading = ref(false)
+const pathError = ref(null)
+const implementationPath = ref(null)
+const papersAnalysis = ref([])
 
 // 保存匹配状态到 localStorage（只在查看合作方案后保存）
 const saveMatchState = () => {
@@ -489,6 +693,100 @@ const highlightKeywords = (text) => {
   return highlighted
 }
 
+// 论文选择相关函数
+const isPaperSelected = (paperId) => {
+  return selectedPaperIds.value.includes(paperId)
+}
+
+const handlePaperSelection = (paperId, checked) => {
+  if (checked && !selectedPaperIds.value.includes(paperId)) {
+    selectedPaperIds.value.push(paperId)
+  } else if (!checked) {
+    selectedPaperIds.value = selectedPaperIds.value.filter(id => id !== paperId)
+  }
+  
+  // 限制最多选择5篇
+  if (selectedPaperIds.value.length > 5) {
+    ElMessage.warning('最多只能选择5篇论文进行分析')
+    selectedPaperIds.value = selectedPaperIds.value.slice(0, 5)
+  }
+}
+
+const clearSelection = () => {
+  selectedPaperIds.value = []
+  ElMessage.info('已清空选择')
+}
+
+// 生成实现路径
+const generateImplementationPath = async () => {
+  if (selectedPaperIds.value.length === 0) {
+    ElMessage.warning('请至少选择一篇论文')
+    return
+  }
+  
+  if (selectedPaperIds.value.length > 5) {
+    ElMessage.warning('最多只能选择5篇论文')
+    return
+  }
+  
+  generatingPath.value = true
+  showPathDialog.value = true
+  pathLoading.value = true
+  pathError.value = null
+  implementationPath.value = null
+  papersAnalysis.value = []
+  
+  try {
+    const requestData = {
+      paper_ids: selectedPaperIds.value,
+      max_pages_per_paper: 20
+    }
+    
+    // 如果有历史ID，使用历史ID获取需求；否则使用当前搜索文本
+    if (currentHistoryId.value) {
+      requestData.history_id = currentHistoryId.value
+    } else {
+      requestData.user_requirement = searchText.value
+    }
+    
+    const response = await api.post('/papers/generate-implementation-path', requestData)
+    
+    if (response.data.status === 'error') {
+      pathError.value = response.data.error_message || '生成实现路径失败'
+      ElMessage.error(pathError.value)
+    } else {
+      implementationPath.value = response.data.implementation_path
+      papersAnalysis.value = response.data.papers_analysis || []
+      ElMessage.success('实现路径生成成功！')
+    }
+  } catch (error) {
+    pathError.value = error.response?.data?.detail || error.message || '生成实现路径失败'
+    ElMessage.error(pathError.value)
+    console.error('生成实现路径失败:', error)
+  } finally {
+    pathLoading.value = false
+    generatingPath.value = false
+  }
+}
+
+// 导出实现路径
+const exportPath = () => {
+  if (!implementationPath.value) {
+    ElMessage.warning('没有可导出的内容')
+    return
+  }
+  
+  const content = JSON.stringify(implementationPath.value, null, 2)
+  const blob = new Blob([content], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `实现路径_${new Date().getTime()}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('导出成功')
+}
+
 // 查看合作方案
 const viewProposal = (id) => {
   // 保存当前状态和匹配结果后再跳转
@@ -652,20 +950,7 @@ const getMatchTypeTagType = (matchType) => {
   padding: 0 20px;
 }
 
-.results-title {
-  font-size: 2.5rem;
-  font-weight: bold;
-  color: #1f2937;
-  margin-bottom: 8px;
-  text-align: center;
-}
-
-.results-subtitle {
-  font-size: 1rem;
-  color: #6b7280;
-  margin-bottom: 40px;
-  text-align: center;
-}
+/* 这些样式在.results-header中已重新定义 */
 
 .card {
   background: #fff;
@@ -677,6 +962,78 @@ const getMatchTypeTagType = (matchType) => {
   min-height: 280px;
   margin-bottom: 20px;
   transition: all 0.3s;
+  position: relative;
+}
+
+.card.selected {
+  border: 2px solid #409eff;
+  box-shadow: 0 4px 20px rgba(64, 158, 255, 0.2);
+}
+
+.paper-checkbox {
+  width: 100%;
+}
+
+.paper-checkbox :deep(.el-checkbox__label) {
+  width: 100%;
+}
+
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.implementation-path-dialog :deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.path-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.path-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #303133;
+  font-size: 18px;
+}
+
+.path-section ul {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.path-section li {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+
+.tech-selection {
+  margin-top: 10px;
+}
+
+.risk-assessment {
+  margin-top: 10px;
+}
+
+.path-loading {
+  padding: 40px;
+}
+
+.path-error {
+  padding: 40px;
+  text-align: center;
 }
 
 .card:hover {
@@ -685,14 +1042,21 @@ const getMatchTypeTagType = (matchType) => {
 }
 
 .card-header {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
+  padding-right: 40px;
 }
 
-.card-header h3 {
-  margin: 0 0 10px;
+.paper-title {
+  margin: 0;
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   color: #1f2937;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-body {
@@ -701,72 +1065,95 @@ const getMatchTypeTagType = (matchType) => {
 }
 
 .summary-content {
-  color: #666;
-  min-height: 60px;
+  color: #4b5563;
+  min-height: 80px;
   font-size: 14px;
-  line-height: 1.6;
-  margin-bottom: 12px;
+  line-height: 1.8;
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .summary-content :deep(.highlight) {
-  background: #fef3c7;
+  background: linear-gradient(120deg, #fef3c7 0%, #fde68a 100%);
   color: #92400e;
-  padding: 2px 4px;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-weight: 600;
+  box-shadow: 0 1px 2px rgba(146, 64, 14, 0.1);
 }
 
-.confidence {
-  margin: 12px 0;
+.confidence-section {
+  margin: 16px 0;
+  padding: 14px;
+  background: #f8fafc;
+  border-radius: 10px;
 }
 
-.confidence span {
-  display: block;
+.score-label {
   font-size: 13px;
-  color: #666;
-  margin-bottom: 6px;
+  font-weight: 600;
+  color: #475569;
 }
 
 .card-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  color: #9ca3af;
-  margin-top: 12px;
+  gap: 10px;
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .meta-item {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 4px 8px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.meta-item:hover {
+  background: #e2e8f0;
 }
 
 .meta-item .el-icon {
-  font-size: 14px;
+  font-size: 13px;
+  color: #64748b;
 }
 
 /* 推荐理由样式 */
 .reason-section {
-  margin: 12px 0;
-  padding: 12px;
-  background: #f9fafb;
-  border-radius: 6px;
-  border-left: 3px solid #667eea;
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-radius: 10px;
+  border-left: 4px solid #3b82f6;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
 }
 
 .reason-label {
   font-size: 13px;
   font-weight: 600;
-  color: #667eea;
-  margin-bottom: 6px;
+  color: #3b82f6;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .reason-text {
   font-size: 13px;
-  color: #666;
-  line-height: 1.6;
+  color: #475569;
+  line-height: 1.7;
 }
 
 /* 分数头部样式 */
@@ -784,7 +1171,15 @@ const getMatchTypeTagType = (matchType) => {
 
 .card-footer {
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.card-footer .el-button {
+  flex: 1;
 }
 
 @media (max-width: 768px) {
@@ -808,6 +1203,117 @@ const getMatchTypeTagType = (matchType) => {
     padding: 10px 16px;
     font-size: 14px;
   }
+}
+
+/* 论文选择和实现路径相关样式 */
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
+}
+
+.results-header > div:first-child {
+  flex: 1;
+}
+
+.results-title {
+  color: #fff;
+  margin-bottom: 8px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.results-subtitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 15px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.action-buttons .el-button {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: none;
+  font-weight: 600;
+}
+
+.action-buttons .el-button--success {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.action-buttons .el-button--success:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+}
+
+.card.selected {
+  border: 2px solid #409eff;
+  box-shadow: 0 4px 20px rgba(64, 158, 255, 0.2);
+}
+
+.paper-checkbox {
+  width: 100%;
+}
+
+.paper-checkbox :deep(.el-checkbox__label) {
+  width: 100%;
+}
+
+/* 实现路径对话框样式 */
+.implementation-path-dialog :deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.path-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.path-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #303133;
+  font-size: 18px;
+}
+
+.path-section ul {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.path-section li {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+
+.tech-selection {
+  margin-top: 10px;
+}
+
+.risk-assessment {
+  margin-top: 10px;
+}
+
+.path-loading {
+  padding: 40px;
+}
+
+.path-error {
+  padding: 40px;
+  text-align: center;
 }
 </style>
 

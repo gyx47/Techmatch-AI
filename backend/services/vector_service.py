@@ -46,7 +46,26 @@ class VectorService:
                 logger.info(f"ChromaDB 连接成功，集合中有 {count} 篇论文")
             except Exception as check_err:
                 error_msg = str(check_err)
-                if 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
+                # 检测数据库结构不兼容错误
+                if 'no such column' in error_msg.lower() or 'collections.topic' in error_msg:
+                    logger.error("=" * 60)
+                    logger.error("警告：ChromaDB 数据库结构不兼容")
+                    logger.error("=" * 60)
+                    logger.error("这通常是因为 ChromaDB 版本升级导致的")
+                    logger.error("")
+                    logger.error("解决方案（保留数据）：")
+                    logger.error("  运行迁移脚本: python backend/scripts/migrate_chromadb.py")
+                    logger.error("  此脚本会导出数据、修复结构、重新导入数据")
+                    logger.error("")
+                    logger.error("或者（会丢失数据）：")
+                    logger.error(f"  删除目录: {db_path}")
+                    logger.error("  然后重新运行索引任务")
+                    logger.error("=" * 60)
+                    # 不自动删除，让用户选择运行迁移脚本
+                    raise RuntimeError(
+                        "ChromaDB 数据库结构不兼容。请运行迁移脚本: python backend/scripts/migrate_chromadb.py"
+                    )
+                elif 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
                     logger.error("=" * 60)
                     logger.error("警告：ChromaDB 集合已损坏，无法读取")
                     logger.error("=" * 60)
@@ -57,8 +76,31 @@ class VectorService:
                 else:
                     logger.warning(f"无法检查集合状态: {check_err}")
         except Exception as e:
-            logger.error(f"初始化 ChromaDB 集合失败: {e}")
-            raise
+            error_msg = str(e)
+            # 检测数据库结构不兼容错误
+            if 'no such column' in error_msg.lower() or 'collections.topic' in error_msg:
+                logger.error("=" * 60)
+                logger.error("初始化 ChromaDB 集合失败：数据库结构不兼容")
+                logger.error("=" * 60)
+                logger.error("这通常是因为 ChromaDB 版本升级导致的")
+                logger.error("")
+                logger.error("解决方案（保留数据）：")
+                logger.error("  1. 停止服务")
+                logger.error("  2. 运行迁移脚本: python backend/scripts/migrate_chromadb.py")
+                logger.error("  3. 重启服务")
+                logger.error("")
+                logger.error("或者（会丢失数据）：")
+                logger.error(f"  1. 停止服务")
+                logger.error(f"  2. 删除目录: {db_path}")
+                logger.error(f"  3. 重启服务（会自动创建新目录）")
+                logger.error(f"  4. 运行索引任务重新索引论文")
+                logger.error("=" * 60)
+                raise RuntimeError(
+                    "ChromaDB 数据库结构不兼容。请运行迁移脚本: python backend/scripts/migrate_chromadb.py"
+                )
+            else:
+                logger.error(f"初始化 ChromaDB 集合失败: {e}")
+                raise
     
     def _load_model(self):
         """延迟加载模型"""

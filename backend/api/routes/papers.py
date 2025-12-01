@@ -1,14 +1,19 @@
 """
 论文相关路由
 """
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from typing import List, Optional
 import pydantic as pydantic
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from database.database import save_paper, get_papers_by_query
+from database.database import save_paper, get_papers_by_query, get_db_connection, get_user_by_username
 from api.routes.auth import get_current_user
+from services.pdf import get_pdf_service
+from services.llm_service import get_llm_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -139,3 +144,215 @@ async def get_categories():
         "cs.PF", "cs.PL", "cs.RO", "cs.SI", "cs.SE", "cs.SD", "cs.SC", "cs.SY"
     ]
     return {"categories": categories}
+
+class GeneratePathRequest(pydantic.BaseModel):
+    """生成实现路径的请求"""
+    paper_ids: List[str]  # 论文的arxiv_id列表
+    user_requirement: Optional[str] = None  # 用户需求描述（可选，如果提供history_id则从历史获取）
+    history_id: Optional[int] = None  # 匹配历史ID（可选，如果提供则从历史获取需求）
+    max_pages_per_paper: int = 20  # 每篇论文最大提取页数
+
+class PaperAnalysisResponse(pydantic.BaseModel):
+    """论文分析结果"""
+    arxiv_id: str
+    title: str
+    analysis: dict
+    status: str  # success, error
+    error_message: Optional[str] = None
+
+class ImplementationPathResponse(pydantic.BaseModel):
+    """实现路径响应"""
+    papers_analysis: List[PaperAnalysisResponse]
+    implementation_path: dict
+    status: str  # success, error
+    error_message: Optional[str] = None
+
+@router.post("/generate-implementation-path", response_model=ImplementationPathResponse)
+async def generate_implementation_path(
+    request: GeneratePathRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    基于选中的论文生成实现路径
+    
+    流程：
+    1. 获取用户需求（从history_id或直接提供）
+    2. 根据arxiv_id从数据库获取论文信息
+    3. 下载并解析每篇论文的PDF
+    4. 使用AI对PDF进行精读分析
+    5. 综合多篇论文的分析结果，生成实现路径
+    """
+    try:
+        if not request.paper_ids:
+            raise HTTPException(status_code=400, detail="论文ID列表不能为空")
+        
+        # 获取用户需求：优先从history_id获取，否则使用直接提供的需求
+        user_requirement = None
+        
+        if request.history_id:
+            # 从匹配历史获取需求
+            user = get_user_by_username(current_user)
+            user_id = user["id"] if user else None
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT search_desc FROM match_history WHERE id = ? AND user_id = ?",
+                (request.history_id, user_id)
+            )
+            history = cursor.fetchone()
+            conn.close()
+            
+            if history:
+                user_requirement = history["search_desc"]
+            else:
+                raise HTTPException(status_code=404, detail="匹配历史不存在或无权限访问")
+        
+        if not user_requirement:
+            user_requirement = request.user_requirement
+        
+        if not user_requirement or not user_requirement.strip():
+            raise HTTPException(status_code=400, detail="用户需求不能为空，请提供user_requirement或history_id")
+        
+        if len(request.paper_ids) > 5:
+            raise HTTPException(status_code=400, detail="最多选择5篇论文进行分析")
+        
+        pdf_service = get_pdf_service()
+        llm_service = get_llm_service()
+        
+        # 从数据库获取论文信息
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        placeholders = ','.join(['?'] * len(request.paper_ids))
+        query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
+        cursor.execute(query, request.paper_ids)
+        papers = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        if len(papers) != len(request.paper_ids):
+            found_ids = {p['arxiv_id'] for p in papers}
+            missing_ids = set(request.paper_ids) - found_ids
+            raise HTTPException(
+                status_code=404, 
+                detail=f"部分论文未找到: {', '.join(missing_ids)}"
+            )
+        
+        # 对每篇论文进行PDF精读分析
+        papers_analysis = []
+        papers_analysis_data = []  # 用于生成实现路径
+        
+        for paper in papers:
+            arxiv_id = paper['arxiv_id']
+            title = paper['title']
+            abstract = paper.get('abstract', '')
+            pdf_url = paper.get('pdf_url', f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+            
+            try:
+                logger.info(f"开始分析论文: {title} ({arxiv_id})")
+                
+                # 获取PDF内容
+                pdf_content = pdf_service.get_paper_content(
+                    pdf_url, 
+                    arxiv_id, 
+                    max_pages=request.max_pages_per_paper
+                )
+                
+                if not pdf_content:
+                    papers_analysis.append(PaperAnalysisResponse(
+                        arxiv_id=arxiv_id,
+                        title=title,
+                        analysis={},
+                        status="error",
+                        error_message="无法获取PDF内容"
+                    ))
+                    continue
+                
+                # AI精读分析
+                analysis = await llm_service.analyze_paper_pdf(
+                    paper_title=title,
+                    paper_abstract=abstract,
+                    pdf_content=pdf_content,
+                    user_requirement=request.user_requirement
+                )
+                
+                if "error" in analysis:
+                    papers_analysis.append(PaperAnalysisResponse(
+                        arxiv_id=arxiv_id,
+                        title=title,
+                        analysis={},
+                        status="error",
+                        error_message=analysis.get("error", "分析失败")
+                    ))
+                else:
+                    papers_analysis.append(PaperAnalysisResponse(
+                        arxiv_id=arxiv_id,
+                        title=title,
+                        analysis=analysis,
+                        status="success"
+                    ))
+                    
+                    # 保存用于生成实现路径（只保存成功分析的）
+                    if analysis and "error" not in analysis:
+                        papers_analysis_data.append({
+                            "paper_title": title,
+                            "paper_abstract": abstract,
+                            "analysis": analysis
+                        })
+                    
+            except Exception as e:
+                logger.error(f"分析论文失败 {arxiv_id}: {e}")
+                papers_analysis.append(PaperAnalysisResponse(
+                    arxiv_id=arxiv_id,
+                    title=title,
+                    analysis={},
+                    status="error",
+                    error_message=str(e)
+                ))
+        
+        # 如果至少有一篇论文分析成功，生成实现路径
+        successful_analyses = [p for p in papers_analysis_data if p]
+        
+        if not successful_analyses:
+            return ImplementationPathResponse(
+                papers_analysis=papers_analysis,
+                implementation_path={},
+                status="error",
+                error_message="所有论文分析均失败，无法生成实现路径"
+            )
+        
+        # 生成综合实现路径
+        try:
+            implementation_path = await llm_service.generate_implementation_path(
+                papers_analysis=successful_analyses,
+                user_requirement=request.user_requirement
+            )
+            
+            if "error" in implementation_path:
+                return ImplementationPathResponse(
+                    papers_analysis=papers_analysis,
+                    implementation_path={},
+                    status="error",
+                    error_message=implementation_path.get("error", "生成实现路径失败")
+                )
+            
+            return ImplementationPathResponse(
+                papers_analysis=papers_analysis,
+                implementation_path=implementation_path,
+                status="success"
+            )
+            
+        except Exception as e:
+            logger.error(f"生成实现路径失败: {e}")
+            return ImplementationPathResponse(
+                papers_analysis=papers_analysis,
+                implementation_path={},
+                status="error",
+                error_message=f"生成实现路径失败: {str(e)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成实现路径接口失败: {e}")
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")

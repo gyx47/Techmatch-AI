@@ -62,9 +62,15 @@ async def match_papers(user_requirement: str, top_k: int = 50) -> List[Dict]:
                     "pdf_url": row["pdf_url"],
                     "vector_score": vec_score # 保留向量分作为参考
                 })
-
         # ---------------------------------------------------------
-        # 步骤 4: LLM 精排 (Re-ranking)
+        # 步骤 4: 防御性排序
+        # ---------------------------------------------------------
+        # 虽然 similar_papers 通常是有序的，但为了防止上游（VectorService）乱序，
+        # 或者 row_dict 处理过程中出现的意外，
+        # 这里显式地按 vector_score 从大到小再排一次，确保万无一失。
+        paper_details.sort(key=lambda x: x["vector_score"], reverse=True)
+        # ---------------------------------------------------------
+        # 步骤 5: LLM 精排 (Re-ranking)
         # ---------------------------------------------------------
         logger.info(f"开始 LLM 精排，候选数量: {len(paper_details)}")
         
