@@ -1,0 +1,103 @@
+{
+  "test_cases": [
+    {
+      "arxiv_id": "2510.00078",
+      "question": "我需要为我们的智能家居机器人设计一个AI大脑，它能在本地设备上实时理解我的语音指令、观察环境变化并自主决策行动，同时要保证在断网或网络不佳时也能流畅运行，并且不能耗电太快。",
+      "paper_title": "Adaptive and Resource-efficient Agentic AI Systems for Mobile and Embedded Devices: A Survey"
+    },
+    {
+      "arxiv_id": "2510.00229",
+      "question": "我需要一个能在用户手机上本地运行的智能助手，它要能准确调用各种APP功能（比如订餐、查天气、发消息），但不能把用户隐私数据传到云端，同时还要保持较高的任务成功率。",
+      "paper_title": "AgentFlux: Decoupled Fine-Tuning & Inference for On-Device Agentic Systems"
+    },
+    {
+      "arxiv_id": "2510.00258",
+      "question": "我需要构建一个能够同时处理复杂状态跟踪和长距离信息关联的序列模型，用于像代码补全或对话系统这样的任务，但发现现有的单一架构（如RNN或Transformer）各有短板，直接组合效果也不好。有没有什么方法能让混合模型真正结合两者的优势，并且在遇到比训练时更长的序列时，依然能保持良好的性能？",
+      "paper_title": "Delayed Attention Training Improves Length Generalization in Transformer--RNN Hybrids"
+    }
+  ],
+  "retrieval_results": [
+    {
+      "question": "我需要为我们的智能家居机器人设计一个AI大脑，它能在本地设备上实时理解我的语音指令、观察环境变化并自主决策行动，同时要保证在断网或网络不佳时也能流畅运行，并且不能耗电太快。",
+      "expected_arxiv_id": "2510.00078",
+      "found": true,
+      "rank": 2,
+      "score": 82,
+      "total_results": 10,
+      "top_3_papers": [
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 92
+        },
+        {
+          "paper_id": "2510.00078",
+          "title": "Adaptive and Resource-efficient Agentic AI Systems",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00441",
+          "title": "Seeing through Uncertainty: Robust Task-Oriented O",
+          "score": 78
+        }
+      ]
+    },
+    {
+      "question": "我需要一个能在用户手机上本地运行的智能助手，它要能准确调用各种APP功能（比如订餐、查天气、发消息），但不能把用户隐私数据传到云端，同时还要保持较高的任务成功率。",
+      "expected_arxiv_id": "2510.00229",
+      "found": true,
+      "rank": 1,
+      "score": 92,
+      "total_results": 10,
+      "top_3_papers": [
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 92
+        },
+        {
+          "paper_id": "2510.00023",
+          "title": "ToolBrain: A Flexible Reinforcement Learning Frame",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00078",
+          "title": "Adaptive and Resource-efficient Agentic AI Systems",
+          "score": 78
+        }
+      ]
+    },
+    {
+      "question": "我需要构建一个能够同时处理复杂状态跟踪和长距离信息关联的序列模型，用于像代码补全或对话系统这样的任务，但发现现有的单一架构（如RNN或Transformer）各有短板，直接组合效果也不好。有没有什么方法能让混合模型真正结合两者的优势，并且在遇到比训练时更长的序列时，依然能保持良好的性能？",
+      "expected_arxiv_id": "2510.00258",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_3_papers": [
+        {
+          "paper_id": "2510.00258",
+          "title": "Delayed Attention Training Improves Length General",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.00028",
+          "title": "Rethinking RoPE Scaling in Quantized LLM: Theory, ",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00133",
+          "title": "Large Language Models Inference Engines based on S",
+          "score": 65
+        }
+      ]
+    }
+  ],
+  "statistics": {
+    "total_count": 3,
+    "found_count": 3,
+    "success_rate": 100.0,
+    "avg_rank": 1.3333333333333333,
+    "avg_score": 89.66666666666667
+  }
+}
