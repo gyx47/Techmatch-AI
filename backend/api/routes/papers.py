@@ -2,9 +2,10 @@
 论文相关路由
 """
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import pydantic as pydantic
 import requests
+import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from database.database import save_paper, get_papers_by_query, get_db_connection, get_user_by_username
@@ -167,6 +168,99 @@ class ImplementationPathResponse(pydantic.BaseModel):
     status: str  # success, error
     error_message: Optional[str] = None
 
+
+async def process_paper(
+    pdf_service: "PDFService",  # pyright: ignore[reportUndefinedVariable]
+    llm_service: "LLMService",  # pyright: ignore[reportUndefinedVariable]
+    paper: dict,
+    user_requirement: str,
+    max_pages_per_paper: int,
+) -> Tuple[PaperAnalysisResponse, Optional[dict]]:
+    """
+    并发处理单篇论文：下载 PDF + 调用 LLM 进行精读分析
+
+    返回：
+        - PaperAnalysisResponse：用于直接返回给前端的单篇分析结果
+        - dict | None：用于后续生成实现路径的精简数据
+    """
+    arxiv_id = paper["arxiv_id"]
+    title = paper["title"]
+    abstract = paper.get("abstract", "")
+    pdf_url = paper.get("pdf_url", f"https://arxiv.org/pdf/{arxiv_id}.pdf")
+
+    try:
+        logger.info(f"开始分析论文: {title} ({arxiv_id})")
+
+        # 使用线程池下载 / 解析 PDF，避免阻塞事件循环
+        pdf_content = await asyncio.to_thread(
+            pdf_service.get_paper_content,
+            pdf_url,
+            arxiv_id,
+            max_pages=max_pages_per_paper,
+        )
+
+        if not pdf_content:
+            return (
+                PaperAnalysisResponse(
+                    arxiv_id=arxiv_id,
+                    title=title,
+                    analysis={},
+                    status="error",
+                    error_message="无法获取PDF内容",
+                ),
+                None,
+            )
+
+        # AI 精读分析（本身就是异步的）
+        analysis = await llm_service.analyze_paper_with_router(
+            paper_title=title,
+            paper_abstract=abstract,
+            pdf_content=pdf_content,
+            user_requirement=user_requirement,
+        )
+
+        if "error" in analysis:
+            return (
+                PaperAnalysisResponse(
+                    arxiv_id=arxiv_id,
+                    title=title,
+                    analysis={},
+                    status="error",
+                    error_message=analysis.get("error", "分析失败"),
+                ),
+                None,
+            )
+
+        # 成功分析
+        summary_data = {
+            "paper_title": title,
+            "paper_abstract": abstract,
+            "analysis": analysis,
+        }
+
+        return (
+            PaperAnalysisResponse(
+                arxiv_id=arxiv_id,
+                title=title,
+                analysis=analysis,
+                status="success",
+            ),
+            summary_data,
+        )
+
+    except Exception as e:
+        logger.error(f"分析论文失败 {arxiv_id}: {e}")
+        return (
+            PaperAnalysisResponse(
+                arxiv_id=arxiv_id,
+                title=title,
+                analysis={},
+                status="error",
+                error_message=str(e),
+            ),
+            None,
+        )
+
 @router.post("/generate-implementation-path", response_model=ImplementationPathResponse)
 async def generate_implementation_path(
     request: GeneratePathRequest,
@@ -216,7 +310,7 @@ async def generate_implementation_path(
         
         if len(request.paper_ids) > 5:
             raise HTTPException(status_code=400, detail="最多选择5篇论文进行分析")
-        
+
         pdf_service = get_pdf_service()
         llm_service = get_llm_service()
         
@@ -238,78 +332,45 @@ async def generate_implementation_path(
                 detail=f"部分论文未找到: {', '.join(missing_ids)}"
             )
         
-        # 对每篇论文进行PDF精读分析
-        papers_analysis = []
-        papers_analysis_data = []  # 用于生成实现路径
-        
-        for paper in papers:
-            arxiv_id = paper['arxiv_id']
-            title = paper['title']
-            abstract = paper.get('abstract', '')
-            pdf_url = paper.get('pdf_url', f"https://arxiv.org/pdf/{arxiv_id}.pdf")
-            
-            try:
-                logger.info(f"开始分析论文: {title} ({arxiv_id})")
-                
-                # 获取PDF内容
-                pdf_content = pdf_service.get_paper_content(
-                    pdf_url, 
-                    arxiv_id, 
-                    max_pages=request.max_pages_per_paper
-                )
-                
-                if not pdf_content:
-                    papers_analysis.append(PaperAnalysisResponse(
-                        arxiv_id=arxiv_id,
-                        title=title,
+        # 对每篇论文进行 PDF 精读分析（并发执行）
+        papers_analysis: List[PaperAnalysisResponse] = []
+        papers_analysis_data: List[dict] = []  # 用于生成实现路径
+
+        max_pages_per_paper = request.max_pages_per_paper or 20
+
+        # 为每篇论文创建一个处理任务
+        tasks = [
+            process_paper(
+                pdf_service=pdf_service,
+                llm_service=llm_service,
+                paper=paper,
+                user_requirement=user_requirement,
+                max_pages_per_paper=max_pages_per_paper,
+            )
+            for paper in papers
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for paper, result in zip(papers, results):
+            if isinstance(result, Exception):
+                logger.error(f"分析论文失败 {paper.get('arxiv_id')}: {result}")
+                papers_analysis.append(
+                    PaperAnalysisResponse(
+                        arxiv_id=paper.get("arxiv_id", ""),
+                        title=paper.get("title", ""),
                         analysis={},
                         status="error",
-                        error_message="无法获取PDF内容"
-                    ))
-                    continue
-                
-                # AI精读分析
-                analysis = await llm_service.analyze_paper_pdf(
-                    paper_title=title,
-                    paper_abstract=abstract,
-                    pdf_content=pdf_content,
-                    user_requirement=request.user_requirement
+                        error_message=str(result),
+                    )
                 )
-                
-                if "error" in analysis:
-                    papers_analysis.append(PaperAnalysisResponse(
-                        arxiv_id=arxiv_id,
-                        title=title,
-                        analysis={},
-                        status="error",
-                        error_message=analysis.get("error", "分析失败")
-                    ))
-                else:
-                    papers_analysis.append(PaperAnalysisResponse(
-                        arxiv_id=arxiv_id,
-                        title=title,
-                        analysis=analysis,
-                        status="success"
-                    ))
-                    
-                    # 保存用于生成实现路径（只保存成功分析的）
-                    if analysis and "error" not in analysis:
-                        papers_analysis_data.append({
-                            "paper_title": title,
-                            "paper_abstract": abstract,
-                            "analysis": analysis
-                        })
-                    
-            except Exception as e:
-                logger.error(f"分析论文失败 {arxiv_id}: {e}")
-                papers_analysis.append(PaperAnalysisResponse(
-                    arxiv_id=arxiv_id,
-                    title=title,
-                    analysis={},
-                    status="error",
-                    error_message=str(e)
-                ))
-        
+                continue
+
+            analysis_resp, summary_data = result
+            papers_analysis.append(analysis_resp)
+            if summary_data:
+                papers_analysis_data.append(summary_data)
+
         # 如果至少有一篇论文分析成功，生成实现路径
         successful_analyses = [p for p in papers_analysis_data if p]
         
@@ -323,19 +384,120 @@ async def generate_implementation_path(
         
         # 生成综合实现路径
         try:
-            implementation_path = await llm_service.generate_implementation_path(
+            raw_implementation_path = await llm_service.generate_implementation_path(
                 papers_analysis=successful_analyses,
                 user_requirement=request.user_requirement
             )
-            
-            if "error" in implementation_path:
+
+            if "error" in raw_implementation_path:
                 return ImplementationPathResponse(
                     papers_analysis=papers_analysis,
                     implementation_path={},
                     status="error",
-                    error_message=implementation_path.get("error", "生成实现路径失败")
+                    error_message=raw_implementation_path.get("error", "生成实现路径失败")
                 )
-            
+
+            def normalize_implementation_path(data: dict) -> dict:
+                """
+                根据 LLM 返回的新格式，构造前端友好的实现路径结构。
+
+                LLM 返回的顶层结构示例：
+                {
+                    "architectural_decision": {...},
+                    "system_architecture": {...},
+                    "development_roadmap_detailed": [...],
+                    "risk_mitigation": {...}
+                }
+                """
+                # 如果已经是前端期望的新结构，直接返回
+                if data.get("overview") or data.get("implementation_phases"):
+                    return data
+
+                architectural_decision = data.get("architectural_decision", {}) or {}
+                system_architecture = data.get("system_architecture", {}) or {}
+                roadmap = data.get("development_roadmap_detailed", []) or []
+                risk_mitigation = data.get("risk_mitigation", {}) or {}
+
+                # 整体概述：优先使用新的 tradeoff_reasoning，其次 reasoning，再加上 pipeline 描述
+                overview_parts = []
+                if architectural_decision.get("tradeoff_reasoning"):
+                    overview_parts.append(str(architectural_decision["tradeoff_reasoning"]))
+                elif architectural_decision.get("reasoning"):
+                    overview_parts.append(str(architectural_decision["reasoning"]))
+
+                if system_architecture.get("pipeline_description"):
+                    overview_parts.append(str(system_architecture["pipeline_description"]))
+
+                overview = "\n\n".join(overview_parts) if overview_parts else None
+
+                # 技术选型：直接暴露当前 LLM 提供的 tech_stack + 选中的 methodology
+                tech_stack = system_architecture.get("tech_stack") or []
+                integration_strategy = (
+                    architectural_decision.get("selected_methodology")
+                    or architectural_decision.get("discarded_methodologies")
+                    or ""
+                )
+                technology_selection = {
+                    "primary_techniques": tech_stack,
+                    "integration_strategy": integration_strategy,
+                } if tech_stack or integration_strategy else None
+
+                # 实施阶段：从 development_roadmap_detailed 里提取 phase / checklist / definition_of_done
+                implementation_phases = []
+                for phase in roadmap:
+                    if not isinstance(phase, dict):
+                        continue
+                    name = phase.get("phase") or phase.get("name") or ""
+                    checklist = phase.get("checklist") or []
+                    definition_of_done = phase.get("definition_of_done")
+
+                    implementation_phases.append({
+                        "phase": name,
+                        "name": name,
+                        "estimated_time": "",  # 新格式中不再提供具体天数，这里留空占位
+                        "objectives": checklist,
+                        "deliverables": [definition_of_done] if definition_of_done else [],
+                        "key_tasks": checklist,
+                    })
+
+                # 风险评估：使用 risk_mitigation 的 key 作为风险项，value 作为对应策略
+                technical_risks = []
+                mitigation_strategies = []
+                for key, value in risk_mitigation.items():
+                    technical_risks.append(str(key))
+                    if value:
+                        mitigation_strategies.append(str(value))
+
+                risk_assessment = {
+                    "technical_risks": technical_risks or None,
+                    "mitigation_strategies": mitigation_strategies or None,
+                } if risk_mitigation else None
+
+                # 成功标准：从每个阶段的 definition_of_done 收集
+                success_criteria = [
+                    phase.get("definition_of_done")
+                    for phase in roadmap
+                    if isinstance(phase, dict) and phase.get("definition_of_done")
+                ]
+
+                normalized = {
+                    "overview": overview,
+                    "technology_selection": technology_selection,
+                    "implementation_phases": implementation_phases or None,
+                    "risk_assessment": risk_assessment,
+                    "success_criteria": success_criteria or None,
+                    # 同时把原始结构也暴露给前端，便于展示更详细的信息
+                    "architectural_decision": architectural_decision or None,
+                    "system_architecture": system_architecture or None,
+                    "raw_development_roadmap": roadmap or None,
+                    "raw_risk_mitigation": risk_mitigation or None,
+                }
+
+                # 去掉值为 None 的字段，避免前端多余判断
+                return {k: v for k, v in normalized.items() if v}
+
+            implementation_path = normalize_implementation_path(raw_implementation_path)
+
             return ImplementationPathResponse(
                 papers_analysis=papers_analysis,
                 implementation_path=implementation_path,

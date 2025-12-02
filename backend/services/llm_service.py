@@ -6,7 +6,7 @@ import os
 import json
 import re
 import random
-from typing import Dict, List
+from typing import Dict, List, Optional
 import httpx
 import asyncio
 
@@ -408,19 +408,35 @@ class LLMService:
         
         # ===== 方案 B：Listwise 排序 =====
         # 将论文分成每组 5 篇的批次，让 LLM 在内部对比打分
+        # 这里使用 asyncio.gather 并发处理多个批次，具体并发度仍由 self.sem 控制
         batch_size = 5
-        all_results = []
-        
+        all_results: List[Dict] = []
+
+        batches = []
         for i in range(0, len(target_papers), batch_size):
-            batch = target_papers[i:i + batch_size]
+            batch = target_papers[i : i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (len(target_papers) + batch_size - 1) // batch_size
-            
-            logger.info(f"正在处理批次 {batch_num}/{total_batches} ({len(batch)} 篇论文)...")
-            
-            # 调用 Listwise 评分
-            batch_results = await self.score_papers_listwise(user_requirement, batch)
-            all_results.extend(batch_results)
+            batches.append((batch_num, total_batches, batch))
+
+        logger.info(f"准备并发处理 {len(batches)} 个批次，每批最多 {batch_size} 篇论文")
+
+        # 并发调用 Listwise 评分；self.sem 会限制实际的 API 并发度
+        tasks = [
+            self.score_papers_listwise(user_requirement, batch)
+            for (_batch_num, _total_batches, batch) in batches
+        ]
+        batch_results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for (batch_num, total_batches, batch), result in zip(batches, batch_results_list):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"批次 {batch_num}/{total_batches} ({len(batch)} 篇论文) 打分失败: {result}"
+                )
+                continue
+
+            logger.info(f"批次 {batch_num}/{total_batches} ({len(batch)} 篇论文) 打分完成")
+            all_results.extend(result)
         
         # 按分数排序（从高到低）
         all_results.sort(key=lambda x: x["score"], reverse=True)
@@ -1008,25 +1024,27 @@ PDF文本片段（截断后）：
             return {"error": "API未配置"}
         
         # 构建论文分析摘要，重点保留工程化分析结果
-        papers_summary = ""
+        papers_summary_list = []
         for idx, paper_data in enumerate(papers_analysis, 1):
-            analysis = paper_data.get("analysis", {})
-            eng = analysis.get("engineering_analysis", {}) or analysis
-            papers_summary += f"""
-[论文 {idx}]
-标题：{paper_data.get('paper_title', '')}
-模型结构：{eng.get('model_architecture', '')}
-输入规格：{eng.get('input_spec', '')}
-Loss / 关键超参：{eng.get('loss_function', '')} | {', '.join(eng.get('key_hyperparameters', []))}
-实现缺口：{analysis.get('implementation_gap', '')}
-复现难度：{analysis.get('reproducibility_score', '')}
----
-"""
+            # 移除 raw pdf content 以节省 token，只保留提取出的 analysis
+            clean_data = {
+                "id": f"Paper_{idx}",
+                "title": paper_data.get('paper_title', ''),
+                # 这里直接把之前的精读结果完整放进去
+                "deep_analysis": paper_data.get("analysis", {}) 
+            }
+            papers_summary_list.append(json.dumps(clean_data, ensure_ascii=False))
+            
+        papers_summary_text = "\n\n".join(papers_summary_list)
         
         system_prompt = """
 你是一位大厂（如 Google / 字节跳动）的 Tech Lead。
 你的任务是基于多篇参考论文，为用户设计一份【工业级】的技术落地架构方案（Technical Design Document, TDD）。
-你需要进行技术选型（Trade-off analysis），权衡成本、性能和开发难度，给出一个最可行（MVP）的路径，而不是简单的论文堆砌。
+你需要进行技术选型（Trade-off analysis），权衡成本、性能和开发难度，给出一个最可行（MVP）的路径。
+你的核心原则是：**Evidence-Based Engineering（基于证据的工程）**。
+❌ 严禁生成：“我们将使用最先进的模型”、“使用标准的数据清洗流程”这种废话。
+✅ 必须具体：“基于Paper_1的分析，我们将采用其提出的 'Gated-Attention' 机制，而非标准的 Self-Attention，因为Paper_1指出前者在长文本下显存占用降低了40%。”
+如果论文中没有提到具体技术栈，请明确说明“论文未提及，建议使用通用方案”，而不是假装那是论文里的内容。
 """.strip()
         
         user_prompt = f"""
@@ -1034,63 +1052,83 @@ Loss / 关键超参：{eng.get('loss_function', '')} | {', '.join(eng.get('key_h
 {user_requirement}
 
 ### 候选技术方案（来自论文分析）
-{papers_summary}
+{papers_summary_text}
 
 ### 架构设计指令
 请按照以下逻辑进行推演：
-1. **技术选型辩论**：对比几篇论文的方法，针对用户的需求，指出哪篇论文的方法最适合作为 Base model？为什么？（Trade-off Analysis）
-2. **MVP架构设计**：设计一个最小可行性产品（MVP）的系统架构。包含：数据层、模型层、服务层。
+1. **核心算法选型 (Root Cause Analysis)**
+   - 必须引用具体论文 ID (如 Paper_1) 的具体参数（如 `model_architecture`, `system_components`）。
+   - 举例：为什么选 Paper_1 的架构而不是 Paper_2？(引用 `pros`/`cons` 或 `performance_metrics` 进行对比)。
+
+2. **MVP 实施细节 (Implementation Specs)**
+   - **数据流**：结合 User Requirement，描述数据如何通过 Paper 中提到的模块。
+   - **关键超参**：直接从分析结果中提取 `key_hyperparameters` (如 LR, Batch Size) 写入文档。
 3. **关键技术栈**：具体到库的版本（如：LangChain v0.1, PyTorch 2.1, ChromaDB）。
-4. **SOP (Standard Operating Procedure)**：给出一份可执行的开发手册。
+4. **SOP (Standard Operating Procedure)**：给出一份可执行的开发手册。注意，不要写 "Step 1: 复现代码"。要写 "Step 1: 复现 Paper_1 的 `[具体模块名]`，输入维度应调整为 `[具体Input Spec]`"。
 
 ### 输出格式 (严格JSON)
 {{
     "architectural_decision": {{
-        "chosen_baseline_paper": "被选中的核心参考论文",
+        "selected_methodology": "引用论文的具体方法名，来自哪一篇论文",
+        "tradeoff_reasoning": "基于论文数据的对比分析..."
         "reasoning": "为什么选它？（例如：虽然论文B精度高，但论文A推理速度快10倍，更适合工业界）",
-        "discarded_papers": "哪些论文的方法被弃用了，为什么？"
+        "discarded_methodologies": "哪些方法被弃用了，为什么？"
     }},
     "system_architecture": {{
         "pipeline_description": "文字描述数据流向：Raw Data -> Preprocessing -> Model -> API",
-        "tech_stack": ["Python 3.10", "FastAPI", "Redis", "Celery", "PyTorch"]
+        "tech_stack": ["列出特定的库，如果论文提到了特定的依赖"]
     }},
     "development_roadmap_detailed": [
         {{
             "phase": "Phase 1: Baseline复现",
-            "days_estimated": 5,
             "checklist": [
-                "Step 1: 跑通论文A的开源代码 demo.py",
-                "Step 2: 替换DataLoader为用户私有数据",
-                "Step 3: 验证Loss是否下降"
+                1."实现 [模块名]，参考 Paper_X 的公式 (3)",
+                2. "设置 Loss Function 为 [具体Loss名称]",
+                3. "调整超参数为 [具体超参数值]"
+                ...
             ],
-            "definition_of_done": "模型在测试集上F1 Score > 0.7"
+            "definition_of_done": "参考 Paper_X 的 [具体指标] 达到 [具体数值]"
         }}
     ],
     "risk_mitigation": {{
         "data_scarcity": "如果数据不够怎么办？（如：使用大模型生成合成数据）",
         "performance_issue": "如果推理太慢怎么办？（如：量化为INT8, 使用ONNX Runtime）"
+        "gap_analysis": "引用 `implementation_gap` 字段的内容",
+        "mitigation": "针对该缺口的解决方案"
     }}
 }}
 """.strip()
         
-        try:
-            async with self.sem:
-                content = await self._call_deepseek(
-                    [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.7,
-                    max_tokens=3000,
-                )
+        max_retries = 3
+        last_error: Optional[Exception] = None
 
-            cleaned = self._clean_json_string(content)
-            data = json.loads(cleaned)
-            return data
-            
-        except Exception as e:
-            logger.error(f"生成实现路径失败: {e}")
-            return {"error": f"生成失败: {str(e)}"}
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with self.sem:
+                    content = await self._call_deepseek(
+                        [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.7,
+                        max_tokens=3000,
+                    )
+
+                cleaned = self._clean_json_string(content)
+                data = json.loads(cleaned)
+                logger.info(f"生成实现路径成功（第 {attempt} 次尝试）")
+                return data
+
+            except Exception as e:
+                last_error = e
+                logger.error(f"生成实现路径失败（第 {attempt} 次尝试）: {e}")
+
+                # 简单退避重试，避免瞬时错误（网络抖动、限流等）
+                if attempt < max_retries:
+                    await asyncio.sleep(1.0 * attempt)
+
+        # 多次重试仍失败，返回统一错误结构
+        return {"error": f"生成失败: {str(last_error) if last_error else '未知错误'}"}
 
 # 单例模式保持不变...
 _llm_service = None

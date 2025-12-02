@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { useUserStore } from '../stores/user'
 
 // 创建axios实例
 const api = axios.create({
@@ -36,10 +37,20 @@ api.interceptors.response.use(
       
       switch (status) {
         case 401:
-          ElMessage.error('认证失败，请重新登录')
-          localStorage.removeItem('token')
-          localStorage.removeItem('userInfo')
-          window.location.href = '/'
+          {
+            // 当前用户凭证无效：统一登出并禁止继续使用功能
+            const userStore = useUserStore()
+            userStore.logout()
+
+            ElMessage.error('登录已过期或凭证无效，请重新登录')
+
+            // 跳转到登录页，并带上原始地址，方便重新登录后返回
+            const currentPath = window.location.pathname + window.location.search
+            const loginUrl = `/login?redirect=${encodeURIComponent(currentPath)}`
+            if (window.location.pathname !== '/login') {
+              window.location.href = loginUrl
+            }
+          }
           break
         case 403:
           ElMessage.error('权限不足')

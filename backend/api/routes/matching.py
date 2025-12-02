@@ -134,7 +134,7 @@ async def index_existing_papers(
                 WHERE arxiv_id IS NOT NULL 
                 AND title IS NOT NULL
                 ORDER BY created_at DESC
-                LIMIT 100
+                LIMIT 300
             """)
             
             papers = cursor.fetchall()

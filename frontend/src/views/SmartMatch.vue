@@ -83,7 +83,7 @@
                   <!-- 推荐理由 -->
                   <div class="reason-section" v-if="item.reason">
                     <div class="reason-label">
-                      <el-icon><Lightbulb /></el-icon>
+                      <el-icon><Opportunity /></el-icon>
                       推荐理由
                     </div>
                     <div class="reason-text">{{ item.reason }}</div>
@@ -153,18 +153,39 @@
         <el-skeleton :rows="10" animated />
       </div>
       <div v-else-if="implementationPath" class="path-content">
-        <!-- 整体概述 -->
-        <div class="path-section" v-if="implementationPath.overview">
-          <h3>📋 整体概述</h3>
-          <p>{{ implementationPath.overview }}</p>
+        <!-- 架构决策（来自 LLM 的 architectural_decision） -->
+        <div class="path-section" v-if="implementationPath.architectural_decision">
+          <h3>🧠 架构决策</h3>
+          <p v-if="implementationPath.architectural_decision.selected_methodology">
+            <strong>选定方法：</strong>
+            {{ implementationPath.architectural_decision.selected_methodology }}
+          </p>
+          <p v-if="implementationPath.architectural_decision.tradeoff_reasoning">
+            <strong>权衡分析：</strong>
+            {{ implementationPath.architectural_decision.tradeoff_reasoning }}
+          </p>
+          <p v-else-if="implementationPath.architectural_decision.reasoning">
+            <strong>决策说明：</strong>
+            {{ implementationPath.architectural_decision.reasoning }}
+          </p>
+          <p v-if="implementationPath.architectural_decision.discarded_methodologies">
+            <strong>未采用方案：</strong>
+            {{ implementationPath.architectural_decision.discarded_methodologies }}
+          </p>
         </div>
 
-        <!-- 技术选型 -->
+        <!-- 整体概述（由后端根据决策 + pipeline 拼接） -->
+        <div class="path-section" v-if="implementationPath.overview">
+          <h3>📋 整体概述</h3>
+          <p style="white-space: pre-line">{{ implementationPath.overview }}</p>
+        </div>
+
+        <!-- 技术选型（tech_stack + 选定 methodology） -->
         <div class="path-section" v-if="implementationPath.technology_selection">
           <h3>🔧 技术选型</h3>
           <div class="tech-selection">
             <div v-if="implementationPath.technology_selection.primary_techniques">
-              <strong>主要技术：</strong>
+              <strong>主要技术栈：</strong>
               <el-tag 
                 v-for="tech in implementationPath.technology_selection.primary_techniques" 
                 :key="tech"
@@ -175,7 +196,7 @@
               </el-tag>
             </div>
             <p v-if="implementationPath.technology_selection.integration_strategy" style="margin-top: 10px">
-              <strong>整合策略：</strong>{{ implementationPath.technology_selection.integration_strategy }}
+              <strong>核心方案：</strong>{{ implementationPath.technology_selection.integration_strategy }}
             </p>
           </div>
         </div>
@@ -302,7 +323,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import { Search, FolderOpened, OfficeBuilding, User, Document, Lightbulb, Calendar } from '@element-plus/icons-vue'
+import { Search, FolderOpened, OfficeBuilding, User, Document, Opportunity, Calendar } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
