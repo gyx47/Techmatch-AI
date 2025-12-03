@@ -18,7 +18,14 @@ class LLMService:
         self.api_base = "https://api.deepseek.com/v1/chat/completions"
         # 增加并发限制，防止触发 API 速率限制
         self.sem = asyncio.Semaphore(5) 
+        self.client = httpx.AsyncClient(
+            timeout=60.0,
+            headers={"Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"}
+        )
 
+    async def close(self):
+        await self.client.aclose()
     @staticmethod
     def _clean_json_string(content: str) -> str:
         """
@@ -83,9 +90,8 @@ class LLMService:
             raise ValueError("API Key not found")
         
         json_config = {"response_format": {"type": "json_object"}} if force_json else {}
-            
-        async with httpx.AsyncClient(timeout=60.0) as client:  # Listwise 可能需要更长时间
-            request_body = {
+        
+        request_body = {
                 "model": "deepseek-chat",
                 "messages": messages,
                 "temperature": temperature,
@@ -93,24 +99,20 @@ class LLMService:
                 **json_config
             }
             
-            response = await client.post(
+        response = await self.client.post(
                 self.api_base,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
                 json=request_body
             )
             
             # 如果请求失败，记录详细的错误信息
-            if response.status_code != 200:
+        if response.status_code != 200:
                 error_detail = response.text
                 logger.error(f"DeepSeek API 请求失败: {response.status_code}")
                 logger.error(f"请求体: {request_body}")
                 logger.error(f"错误详情: {error_detail}")
                 response.raise_for_status()
             
-            return response.json()["choices"][0]["message"]["content"]
+        return response.json()["choices"][0]["message"]["content"]
 
     async def classify_paper_type(
         self,
@@ -424,7 +426,8 @@ class LLMService:
         # 并发调用 Listwise 评分；self.sem 会限制实际的 API 并发度
         tasks = [
             self.score_papers_listwise(user_requirement, batch)
-            for (_batch_num, _total_batches, batch) in batches
+            for (_batch_num, _total_batches, batch) in batches 
+            #内层生成 tasks 的时候，其实 只需要 batch，不需要 batch_num 和 total_batches，但解包时必须写三个变量，于是就用 _batch_num, _total_batches 表示“解包出来但故意不使用”。变量名前加 _，表示“这里有这个值，但后面不会用它，只是为了结构完整/代码可读”。
         ]
         batch_results_list = await asyncio.gather(*tasks, return_exceptions=True)
 

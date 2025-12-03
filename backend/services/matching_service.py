@@ -1,6 +1,7 @@
 """
 匹配服务 - 整合 Query Expansion + Vector Search + LLM Re-ranking
 """
+import asyncio
 import logging
 from typing import List, Dict
 from database.database import get_db_connection
@@ -32,18 +33,25 @@ async def match_papers(user_requirement: str, top_k: int = 50) -> List[Dict]:
             return []
 
         # ---------------------------------------------------------
-        # 步骤 3: 数据填充 (Hydration)
+        # 步骤 3: 数据填充 (Hydration) - 使用线程池执行，避免阻塞事件循环
         # ---------------------------------------------------------
         paper_ids = [p[0] for p in similar_papers]
-        conn = get_db_connection()
-        cursor = conn.cursor()
         
-        # 优化 SQL：一次性查出所有数据，不再循环查
-        placeholders = ','.join(['?'] * len(paper_ids))
-        query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
-        cursor.execute(query, paper_ids)
-        rows = cursor.fetchall()
-        conn.close()
+        # 将同步的数据库查询放到线程池中执行
+        def fetch_papers_from_db(paper_ids: List[str]):
+            """从数据库批量获取论文详细信息（同步函数，在线程池中执行）"""
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # 优化 SQL：一次性查出所有数据，不再循环查
+            placeholders = ','.join(['?'] * len(paper_ids))
+            query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
+            cursor.execute(query, paper_ids)
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
+        
+        rows = await asyncio.to_thread(fetch_papers_from_db, paper_ids)
 
         # 构建详细列表，保持向量搜索的顺序（因为 SQL 返回顺序是不定的）
         row_dict = {row["arxiv_id"]: row for row in rows}

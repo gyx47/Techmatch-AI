@@ -2,102 +2,696 @@
   "test_cases": [
     {
       "arxiv_id": "2510.00078",
-      "question": "我需要为我们的智能家居机器人设计一个AI大脑，它能在本地设备上实时理解我的语音指令、观察环境变化并自主决策行动，同时要保证在断网或网络不佳时也能流畅运行，并且不能耗电太快。",
+      "questions": [
+        "如何为部署在自动驾驶汽车上的智能体设计一个能够根据实时路况和计算负载动态调整推理复杂度的弹性基础模型推理框架？",
+        "在资源受限的移动设备上，如何实现一个无需大量离线微调、仅通过测试时自适应就能让视觉-语言模型持续适应新用户界面（GUI）的智能体系统？",
+        "如何系统地评估一个运行在边缘设备上的多模态智能体AI系统，在面临数据分布漂移时，其准确性、延迟和通信开销之间的权衡与鲁棒性？"
+      ],
       "paper_title": "Adaptive and Resource-efficient Agentic AI Systems for Mobile and Embedded Devices: A Survey"
     },
     {
+      "arxiv_id": "2510.00181",
+      "questions": [
+        "我们正在开发一个基于大型视觉语言模型的无人机应急降落系统，如何有效防御像CHAI这类通过视觉误导指令进行的劫持攻击，确保在真实复杂环境中（如存在误导性路牌或涂鸦）的飞行安全？",
+        "针对CHAI攻击中利用系统化搜索令牌空间和构建提示词典来生成视觉攻击提示的方法，有哪些创新的防御算法或模型架构能够在不显著降低LVLM多模态推理能力的前提下，检测或中和这些嵌入的欺骗性自然语言指令？",
+        "在评估像CHAI这样的新型多模态提示攻击时，除了传统的对抗鲁棒性指标，还需要设计哪些针对性的实验和量化指标，才能全面衡量其在自动驾驶、空中目标跟踪等具体具身AI任务上的实际威胁程度和防御方案的有效性？"
+      ],
+      "paper_title": "CHAI: Command Hijacking against embodied AI"
+    },
+    {
       "arxiv_id": "2510.00229",
-      "question": "我需要一个能在用户手机上本地运行的智能助手，它要能准确调用各种APP功能（比如订餐、查天气、发消息），但不能把用户隐私数据传到云端，同时还要保持较高的任务成功率。",
+      "questions": [
+        "如何为智能手机上的个人健康助手设计一个能够准确调用多种本地API（如心率监测、步数统计、用药提醒）的轻量级AI代理系统？",
+        "在工具调用任务中，将工具选择和参数生成解耦进行LoRA微调时，如何设计有效的损失掩码策略来分别优化这两个子任务，避免相互干扰？",
+        "在MCP-Bench等工具调用基准测试中，如何评估和比较像AgentFlux这样的解耦微调框架与端到端微调方法在准确性和推理效率上的具体差异？"
+      ],
       "paper_title": "AgentFlux: Decoupled Fine-Tuning & Inference for On-Device Agentic Systems"
     },
     {
       "arxiv_id": "2510.00258",
-      "question": "我需要构建一个能够同时处理复杂状态跟踪和长距离信息关联的序列模型，用于像代码补全或对话系统这样的任务，但发现现有的单一架构（如RNN或Transformer）各有短板，直接组合效果也不好。有没有什么方法能让混合模型真正结合两者的优势，并且在遇到比训练时更长的序列时，依然能保持良好的性能？",
+      "questions": [
+        "如何设计一个能够同时处理状态追踪和关联回忆任务的混合序列模型，使其在长序列上也能保持高精度？",
+        "在Transformer-RNN混合模型中，如何通过延迟注意力训练策略来防止Transformer组件利用捷径解决方案，从而提升模型在训练未见长度序列上的泛化能力？",
+        "对于一个结合了状态追踪和关联回忆的复合任务，如何评估和验证延迟注意力训练策略能使混合模型在长度是训练数据三倍的序列上达到超过90%的准确率？"
+      ],
       "paper_title": "Delayed Attention Training Improves Length Generalization in Transformer--RNN Hybrids"
+    },
+    {
+      "arxiv_id": "2510.00381",
+      "questions": [
+        "在动态环境（如无人机集群协同侦察）中，如何设计一个基于语义自适应传输和分布式分层决策的通信框架，以保证多智能体在资源受限下的实时、鲁棒协作？",
+        "针对边缘AI智能体（如车载计算单元）的算力瓶颈，如何结合语义轻量化传输中的模型剪枝、量化和感知感知采样技术，构建一个低复杂度的语义编码-解码模型？",
+        "在仿真验证中，与传统的集中式决策方案相比，所提出的语义自进化控制（分布式分层优化）方法在收敛速度和系统鲁棒性指标上能带来多少具体提升？"
+      ],
+      "paper_title": "Semantic-Driven AI Agent Communications: Challenges and Solutions"
+    },
+    {
+      "arxiv_id": "2510.00404",
+      "questions": [
+        "如何利用AbsTopK稀疏自编码器来构建一个能够同时理解并控制文本中对立概念（如积极/消极情感、男性/女性指代）的AI内容审核或生成系统？",
+        "在稀疏自编码器的统一框架下，除了ReLU、JumpReLU和TopK，还有哪些潜在的激活函数或正则化器可以通过展开近端梯度法推导出来，并可能解决现有方法在表示双向特征时的局限性？",
+        "在针对大语言模型进行特征解耦的实验中，AbsTopK SAE在哪些具体的评测任务（例如概念探测或模型操控）上，其重建保真度和特征可解释性指标显著优于传统的ReLU SAE和TopK SAE？"
+      ],
+      "paper_title": "AbsTopK: Rethinking Sparse Autoencoders For Bidirectional Features"
     }
   ],
   "retrieval_results": [
     {
-      "question": "我需要为我们的智能家居机器人设计一个AI大脑，它能在本地设备上实时理解我的语音指令、观察环境变化并自主决策行动，同时要保证在断网或网络不佳时也能流畅运行，并且不能耗电太快。",
+      "question": "如何为部署在自动驾驶汽车上的智能体设计一个能够根据实时路况和计算负载动态调整推理复杂度的弹性基础模型推理框架？",
       "expected_arxiv_id": "2510.00078",
       "found": true,
-      "rank": 2,
-      "score": 82,
+      "rank": 1,
+      "score": 88,
       "total_results": 10,
-      "top_3_papers": [
-        {
-          "paper_id": "2510.00229",
-          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
-          "score": 92
-        },
+      "top_5_papers": [
         {
           "paper_id": "2510.00078",
           "title": "Adaptive and Resource-efficient Agentic AI Systems",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00133",
+          "title": "Large Language Models Inference Engines based on S",
           "score": 82
+        },
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00401",
+          "title": "Physics-Informed Neural Controlled Differential Eq",
+          "score": 78
         },
         {
           "paper_id": "2510.00441",
           "title": "Seeing through Uncertainty: Robust Task-Oriented O",
-          "score": 78
+          "score": 65
         }
       ]
     },
     {
-      "question": "我需要一个能在用户手机上本地运行的智能助手，它要能准确调用各种APP功能（比如订餐、查天气、发消息），但不能把用户隐私数据传到云端，同时还要保持较高的任务成功率。",
+      "question": "在资源受限的移动设备上，如何实现一个无需大量离线微调、仅通过测试时自适应就能让视觉-语言模型持续适应新用户界面（GUI）的智能体系统？",
+      "expected_arxiv_id": "2510.00078",
+      "found": true,
+      "rank": 1,
+      "score": 88,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00078",
+          "title": "Adaptive and Resource-efficient Agentic AI Systems",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00570",
+          "title": "Adaptive Shared Experts with LoRA-Based Mixture of",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00206",
+          "title": "LoRAFusion: Efficient LoRA Fine-Tuning for LLMs",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00192",
+          "title": "PrunedLoRA: Robust Gradient-Based structured pruni",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00739",
+          "title": "TD-JEPA: Latent-predictive Representations for Zer",
+          "score": 65
+        }
+      ]
+    },
+    {
+      "question": "如何系统地评估一个运行在边缘设备上的多模态智能体AI系统，在面临数据分布漂移时，其准确性、延迟和通信开销之间的权衡与鲁棒性？",
+      "expected_arxiv_id": "2510.00078",
+      "found": false,
+      "rank": -1,
+      "score": 0,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00589",
+          "title": "Signal Classification Recovery Across Domains Usin",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00841",
+          "title": "LLM Routing with Dueling Feedback",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00065",
+          "title": "Federated Learning Meets LLMs: Feature Extraction ",
+          "score": 70
+        }
+      ]
+    },
+    {
+      "question": "我们正在开发一个基于大型视觉语言模型的无人机应急降落系统，如何有效防御像CHAI这类通过视觉误导指令进行的劫持攻击，确保在真实复杂环境中（如存在误导性路牌或涂鸦）的飞行安全？",
+      "expected_arxiv_id": "2510.00181",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00181",
+          "title": "CHAI: Command Hijacking against embodied AI",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00167",
+          "title": "Drones that Think on their Feet: Sudden Landing De",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00451",
+          "title": "A Call to Action for a Secure-by-Design Generative",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00906",
+          "title": "TubeDAgger: Reducing the Number of Expert Interven",
+          "score": 72
+        }
+      ]
+    },
+    {
+      "question": "针对CHAI攻击中利用系统化搜索令牌空间和构建提示词典来生成视觉攻击提示的方法，有哪些创新的防御算法或模型架构能够在不显著降低LVLM多模态推理能力的前提下，检测或中和这些嵌入的欺骗性自然语言指令？",
+      "expected_arxiv_id": "2510.00181",
+      "found": false,
+      "rank": -1,
+      "score": 0,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00451",
+          "title": "A Call to Action for a Secure-by-Design Generative",
+          "score": 85
+        },
+        {
+          "paper_id": "2510.00240",
+          "title": "SecureBERT 2.0: Advanced Language Model for Cybers",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00296",
+          "title": "Beyond Token Probes: Hallucination Detection via A",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00404",
+          "title": "AbsTopK: Rethinking Sparse Autoencoders For Bidire",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00475",
+          "title": "Diagnosing Shortcut-Induced Rigidity in Continual ",
+          "score": 55
+        }
+      ]
+    },
+    {
+      "question": "在评估像CHAI这样的新型多模态提示攻击时，除了传统的对抗鲁棒性指标，还需要设计哪些针对性的实验和量化指标，才能全面衡量其在自动驾驶、空中目标跟踪等具体具身AI任务上的实际威胁程度和防御方案的有效性？",
+      "expected_arxiv_id": "2510.00181",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00181",
+          "title": "CHAI: Command Hijacking against embodied AI",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.01014",
+          "title": "Towards Adversarial Training under Hyperspectral I",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00586",
+          "title": "Eyes-on-Me: Scalable RAG Poisoning through Transfe",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00451",
+          "title": "A Call to Action for a Secure-by-Design Generative",
+          "score": 70
+        },
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 65
+        }
+      ]
+    },
+    {
+      "question": "如何为智能手机上的个人健康助手设计一个能够准确调用多种本地API（如心率监测、步数统计、用药提醒）的轻量级AI代理系统？",
       "expected_arxiv_id": "2510.00229",
       "found": true,
       "rank": 1,
       "score": 92,
       "total_results": 10,
-      "top_3_papers": [
+      "top_5_papers": [
         {
           "paper_id": "2510.00229",
           "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
           "score": 92
         },
         {
-          "paper_id": "2510.00023",
-          "title": "ToolBrain: A Flexible Reinforcement Learning Frame",
+          "paper_id": "2510.00078",
+          "title": "Adaptive and Resource-efficient Agentic AI Systems",
           "score": 82
         },
         {
-          "paper_id": "2510.00078",
-          "title": "Adaptive and Resource-efficient Agentic AI Systems",
+          "paper_id": "2510.00023",
+          "title": "ToolBrain: A Flexible Reinforcement Learning Frame",
           "score": 78
+        },
+        {
+          "paper_id": "2510.00274",
+          "title": "MAGIC-MASK: Multi-Agent Guided Inter-Agent Collabo",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00451",
+          "title": "A Call to Action for a Secure-by-Design Generative",
+          "score": 65
         }
       ]
     },
     {
-      "question": "我需要构建一个能够同时处理复杂状态跟踪和长距离信息关联的序列模型，用于像代码补全或对话系统这样的任务，但发现现有的单一架构（如RNN或Transformer）各有短板，直接组合效果也不好。有没有什么方法能让混合模型真正结合两者的优势，并且在遇到比训练时更长的序列时，依然能保持良好的性能？",
+      "question": "在工具调用任务中，将工具选择和参数生成解耦进行LoRA微调时，如何设计有效的损失掩码策略来分别优化这两个子任务，避免相互干扰？",
+      "expected_arxiv_id": "2510.00229",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.00347",
+          "title": "In-Context Curiosity: Distilling Exploration for D",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00570",
+          "title": "Adaptive Shared Experts with LoRA-Based Mixture of",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00023",
+          "title": "ToolBrain: A Flexible Reinforcement Learning Frame",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.01037",
+          "title": "CurES: From Gradient Analysis to Efficient Curricu",
+          "score": 65
+        }
+      ]
+    },
+    {
+      "question": "在MCP-Bench等工具调用基准测试中，如何评估和比较像AgentFlux这样的解耦微调框架与端到端微调方法在准确性和推理效率上的具体差异？",
+      "expected_arxiv_id": "2510.00229",
+      "found": false,
+      "rank": -1,
+      "score": 0,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00316",
+          "title": "DiSC-AMC: Token- and Parameter-Efficient Discretiz",
+          "score": 85
+        },
+        {
+          "paper_id": "2510.00253",
+          "title": "CODED-SMOOTHING: Coding Theory Helps Generalizatio",
+          "score": 70
+        },
+        {
+          "paper_id": "2510.00294",
+          "title": "Free Draft-and-Verification: Toward Lossless Paral",
+          "score": 70
+        },
+        {
+          "paper_id": "2510.00133",
+          "title": "Large Language Models Inference Engines based on S",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00288",
+          "title": "o-MEGA: Optimized Methods for Explanation Generati",
+          "score": 55
+        }
+      ]
+    },
+    {
+      "question": "如何设计一个能够同时处理状态追踪和关联回忆任务的混合序列模型，使其在长序列上也能保持高精度？",
+      "expected_arxiv_id": "2510.00258",
+      "found": false,
+      "rank": -1,
+      "score": 0,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00373",
+          "title": "Combining Large Language Models and Gradient-Free ",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00563",
+          "title": "Memory Determines Learning Direction: A Theory of ",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00133",
+          "title": "Large Language Models Inference Engines based on S",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00953",
+          "title": "Modeling Market States with Clustering and State M",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00316",
+          "title": "DiSC-AMC: Token- and Parameter-Efficient Discretiz",
+          "score": 65
+        }
+      ]
+    },
+    {
+      "question": "在Transformer-RNN混合模型中，如何通过延迟注意力训练策略来防止Transformer组件利用捷径解决方案，从而提升模型在训练未见长度序列上的泛化能力？",
       "expected_arxiv_id": "2510.00258",
       "found": true,
       "rank": 1,
       "score": 95,
       "total_results": 10,
-      "top_3_papers": [
+      "top_5_papers": [
         {
           "paper_id": "2510.00258",
           "title": "Delayed Attention Training Improves Length General",
           "score": 95
         },
         {
-          "paper_id": "2510.00028",
-          "title": "Rethinking RoPE Scaling in Quantized LLM: Theory, ",
+          "paper_id": "2510.00030",
+          "title": "Temporal-Aware Iterative Speech Model for Dementia",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00726",
+          "title": "CroSTAta: Cross-State Transition Attention Transfo",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00365",
+          "title": "Continual Learning with Query-Only Attention",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00739",
+          "title": "TD-JEPA: Latent-predictive Representations for Zer",
+          "score": 65
+        }
+      ]
+    },
+    {
+      "question": "对于一个结合了状态追踪和关联回忆的复合任务，如何评估和验证延迟注意力训练策略能使混合模型在长度是训练数据三倍的序列上达到超过90%的准确率？",
+      "expected_arxiv_id": "2510.00258",
+      "found": true,
+      "rank": 1,
+      "score": 98,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00258",
+          "title": "Delayed Attention Training Improves Length General",
+          "score": 98
+        },
+        {
+          "paper_id": "2510.00365",
+          "title": "Continual Learning with Query-Only Attention",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00739",
+          "title": "TD-JEPA: Latent-predictive Representations for Zer",
+          "score": 72
+        },
+        {
+          "paper_id": "2510.00375",
+          "title": "Multidimensional Bayesian Active Machine Learning ",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00600",
+          "title": "Hybrid Training for Vision-Language-Action Models",
+          "score": 45
+        }
+      ]
+    },
+    {
+      "question": "在动态环境（如无人机集群协同侦察）中，如何设计一个基于语义自适应传输和分布式分层决策的通信框架，以保证多智能体在资源受限下的实时、鲁棒协作？",
+      "expected_arxiv_id": "2510.00381",
+      "found": true,
+      "rank": 1,
+      "score": 92,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00381",
+          "title": "Semantic-Driven AI Agent Communications: Challenge",
+          "score": 92
+        },
+        {
+          "paper_id": "2510.00183",
+          "title": "Lattica: A Decentralized Cross-NAT Communication F",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00229",
+          "title": "AgentFlux: Decoupled Fine-Tuning & Inference for O",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00701",
+          "title": "Graph Integrated Multimodal Concept Bottleneck Mod",
+          "score": 55
+        }
+      ]
+    },
+    {
+      "question": "针对边缘AI智能体（如车载计算单元）的算力瓶颈，如何结合语义轻量化传输中的模型剪枝、量化和感知感知采样技术，构建一个低复杂度的语义编码-解码模型？",
+      "expected_arxiv_id": "2510.00381",
+      "found": true,
+      "rank": 2,
+      "score": 88,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.00381",
+          "title": "Semantic-Driven AI Agent Communications: Challenge",
           "score": 88
         },
         {
           "paper_id": "2510.00133",
           "title": "Large Language Models Inference Engines based on S",
+          "score": 72
+        },
+        {
+          "paper_id": "2510.00404",
+          "title": "AbsTopK: Rethinking Sparse Autoencoders For Bidire",
+          "score": 72
+        },
+        {
+          "paper_id": "2510.00316",
+          "title": "DiSC-AMC: Token- and Parameter-Efficient Discretiz",
           "score": 65
+        }
+      ]
+    },
+    {
+      "question": "在仿真验证中，与传统的集中式决策方案相比，所提出的语义自进化控制（分布式分层优化）方法在收敛速度和系统鲁棒性指标上能带来多少具体提升？",
+      "expected_arxiv_id": "2510.00381",
+      "found": false,
+      "rank": -1,
+      "score": 0,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00183",
+          "title": "Lattica: A Decentralized Cross-NAT Communication F",
+          "score": 82
+        },
+        {
+          "paper_id": "2510.01083",
+          "title": "Multi-Actor Multi-Critic Deep Deterministic Reinfo",
+          "score": 78
+        },
+        {
+          "paper_id": "2510.00274",
+          "title": "MAGIC-MASK: Multi-Agent Guided Inter-Agent Collabo",
+          "score": 68
+        },
+        {
+          "paper_id": "2510.00739",
+          "title": "TD-JEPA: Latent-predictive Representations for Zer",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 45
+        }
+      ]
+    },
+    {
+      "question": "如何利用AbsTopK稀疏自编码器来构建一个能够同时理解并控制文本中对立概念（如积极/消极情感、男性/女性指代）的AI内容审核或生成系统？",
+      "expected_arxiv_id": "2510.00404",
+      "found": true,
+      "rank": 1,
+      "score": 92,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00404",
+          "title": "AbsTopK: Rethinking Sparse Autoencoders For Bidire",
+          "score": 92
+        },
+        {
+          "paper_id": "2510.01070",
+          "title": "Eliciting Secret Knowledge from Language Models",
+          "score": 88
+        },
+        {
+          "paper_id": "2510.01048",
+          "title": "Interpreting Language Models Through Concept Descr",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00316",
+          "title": "DiSC-AMC: Token- and Parameter-Efficient Discretiz",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.01038",
+          "title": "Activation-Deactivation: A General Framework for R",
+          "score": 50
+        }
+      ]
+    },
+    {
+      "question": "在稀疏自编码器的统一框架下，除了ReLU、JumpReLU和TopK，还有哪些潜在的激活函数或正则化器可以通过展开近端梯度法推导出来，并可能解决现有方法在表示双向特征时的局限性？",
+      "expected_arxiv_id": "2510.00404",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00404",
+          "title": "AbsTopK: Rethinking Sparse Autoencoders For Bidire",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.00233",
+          "title": "Differentiable Autoencoding Neural Operator for In",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00253",
+          "title": "CODED-SMOOTHING: Coding Theory Helps Generalizatio",
+          "score": 45
+        },
+        {
+          "paper_id": "2510.00083",
+          "title": "Enhancing Certifiable Semantic Robustness via Robu",
+          "score": 35
+        },
+        {
+          "paper_id": "2510.00192",
+          "title": "PrunedLoRA: Robust Gradient-Based structured pruni",
+          "score": 30
+        }
+      ]
+    },
+    {
+      "question": "在针对大语言模型进行特征解耦的实验中，AbsTopK SAE在哪些具体的评测任务（例如概念探测或模型操控）上，其重建保真度和特征可解释性指标显著优于传统的ReLU SAE和TopK SAE？",
+      "expected_arxiv_id": "2510.00404",
+      "found": true,
+      "rank": 1,
+      "score": 95,
+      "total_results": 10,
+      "top_5_papers": [
+        {
+          "paper_id": "2510.00404",
+          "title": "AbsTopK: Rethinking Sparse Autoencoders For Bidire",
+          "score": 95
+        },
+        {
+          "paper_id": "2510.00468",
+          "title": "Feature Identification via the Empirical NTK",
+          "score": 85
+        },
+        {
+          "paper_id": "2510.01048",
+          "title": "Interpreting Language Models Through Concept Descr",
+          "score": 65
+        },
+        {
+          "paper_id": "2510.00288",
+          "title": "o-MEGA: Optimized Methods for Explanation Generati",
+          "score": 55
+        },
+        {
+          "paper_id": "2510.00475",
+          "title": "Diagnosing Shortcut-Induced Rigidity in Continual ",
+          "score": 35
         }
       ]
     }
   ],
   "statistics": {
-    "total_count": 3,
-    "found_count": 3,
-    "success_rate": 100.0,
-    "avg_rank": 1.3333333333333333,
-    "avg_score": 89.66666666666667
+    "total_count": 18,
+    "found_count": 13,
+    "success_rate": 72.22222222222221,
+    "avg_rank": 1.0769230769230769,
+    "avg_score": 92.92307692307692
   }
 }
