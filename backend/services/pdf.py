@@ -9,6 +9,11 @@ from typing import Optional, List, Dict
 from pathlib import Path
 import tempfile
 import os
+from database.database import (
+    get_paper_content_cache,
+    increment_paper_content_use_count,
+    save_paper_content_cache
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +126,7 @@ class PDFService:
     def get_paper_content(self, pdf_url: str, arxiv_id: str, max_pages: int = 20) -> Optional[str]:
         """
         获取论文的完整文本内容（下载+解析）
+        优先从数据库缓存中读取，如果不存在则下载解析并保存到数据库
         
         Args:
             pdf_url: PDF的URL
@@ -131,13 +137,28 @@ class PDFService:
             论文文本内容，失败返回None
         """
         try:
-            # 下载PDF
+            # 先检查数据库缓存
+            cached = get_paper_content_cache(arxiv_id, max_pages)
+            if cached:
+                # 增加使用次数
+                increment_paper_content_use_count(arxiv_id, max_pages)
+                logger.info(f"从缓存获取论文内容: {arxiv_id} (使用次数: {cached['use_count'] + 1})")
+                return cached["content"]
+            
+            # 缓存不存在，下载并解析PDF
+            logger.info(f"缓存不存在，开始下载解析: {arxiv_id}")
             pdf_path = self.download_pdf(pdf_url, arxiv_id)
             if not pdf_path:
                 return None
             
             # 提取文本
             text = self.extract_text_from_pdf(pdf_path, max_pages)
+            
+            # 保存到数据库缓存
+            if text:
+                save_paper_content_cache(arxiv_id, pdf_url, text, max_pages)
+                logger.info(f"论文解析内容已保存到缓存: {arxiv_id}")
+            
             return text
             
         except Exception as e:

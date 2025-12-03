@@ -149,10 +149,76 @@
       :close-on-click-modal="false"
       class="implementation-path-dialog"
     >
+      <!-- 实时进度：仅在任务运行中显示 -->
+      <div class="path-section" v-if="pathProgress && pathProgress.status === 'running'">
+        <h3>⏱ 当前进度</h3>
+        <p>
+          <strong>状态：</strong>
+          <span v-if="pathProgress.status === 'running'">生成中...</span>
+          <span v-else-if="pathProgress.status === 'finished'">已完成</span>
+          <span v-else-if="pathProgress.status === 'error'">出错</span>
+          <span v-else>未知</span>
+        </p>
+        <p v-if="pathProgress.current_step">
+          <strong>当前步骤：</strong>{{ pathProgress.current_step }}
+        </p>
+        <el-progress
+          v-if="pathProgress.total_papers"
+          :percentage="Math.round((pathProgress.completed_papers / pathProgress.total_papers) * 100)"
+          :stroke-width="8"
+          style="max-width: 400px; margin-top: 8px"
+        />
+      </div>
+
       <div v-if="pathLoading" class="path-loading">
         <el-skeleton :rows="10" animated />
       </div>
       <div v-else-if="implementationPath" class="path-content">
+        <!-- 耗时总览 -->
+        <div class="path-section" v-if="pathTimings">
+          <h3>⏱ 性能概览</h3>
+          <p v-if="pathTimings.total_ms">
+            <strong>总耗时：</strong>{{ (pathTimings.total_ms / 1000).toFixed(2) }} 秒
+          </p>
+          <p v-if="pathTimings.implementation_path_ms">
+            <strong>实现路径汇总耗时：</strong>{{ (pathTimings.implementation_path_ms / 1000).toFixed(2) }} 秒
+          </p>
+          <div v-if="pathTimings.per_paper && pathTimings.per_paper.length" style="margin-top: 10px">
+            <strong>单篇论文耗时：</strong>
+            <el-table
+              :data="pathTimings.per_paper"
+              size="small"
+              style="width: 100%; margin-top: 8px"
+            >
+              <el-table-column prop="title" label="论文" min-width="220" />
+              <el-table-column
+                label="PDF解析 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.pdf_ms ?? '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="LLM精读 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.llm_ms ?? '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="合计 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.total_ms ?? '-' }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+
         <!-- 架构决策（来自 LLM 的 architectural_decision） -->
         <div class="path-section" v-if="implementationPath.architectural_decision">
           <h3>🧠 架构决策</h3>
@@ -348,6 +414,10 @@ const pathLoading = ref(false)
 const pathError = ref(null)
 const implementationPath = ref(null)
 const papersAnalysis = ref([])
+const pathTimings = ref(null)
+const pathTaskId = ref(null)
+const pathProgress = ref(null)
+let pathProgressTimer = null
 
 // 保存匹配状态到 localStorage（只在查看合作方案后保存）
 const saveMatchState = () => {
@@ -756,11 +826,17 @@ const generateImplementationPath = async () => {
   pathError.value = null
   implementationPath.value = null
   papersAnalysis.value = []
+  pathTimings.value = null
+  pathProgress.value = null
+
+  // 为本次任务生成一个ID，用于后端进度跟踪
+  pathTaskId.value = Date.now().toString()
   
   try {
     const requestData = {
       paper_ids: selectedPaperIds.value,
-      max_pages_per_paper: 20
+      max_pages_per_paper: 20,
+      task_id: pathTaskId.value
     }
     
     // 如果有历史ID，使用历史ID获取需求；否则使用当前搜索文本
@@ -770,6 +846,21 @@ const generateImplementationPath = async () => {
       requestData.user_requirement = searchText.value
     }
     
+    // 启动进度轮询
+    if (pathTaskId.value) {
+      const pollProgress = async () => {
+        if (!pathTaskId.value) return
+        try {
+          const res = await api.get(`/papers/implementation-progress/${pathTaskId.value}`)
+          pathProgress.value = res.data
+        } catch (e) {
+          console.error('获取实现路径进度失败:', e)
+        }
+      }
+      await pollProgress()
+      pathProgressTimer = setInterval(pollProgress, 1000)
+    }
+
     const response = await api.post('/papers/generate-implementation-path', requestData)
     
     if (response.data.status === 'error') {
@@ -778,6 +869,7 @@ const generateImplementationPath = async () => {
     } else {
       implementationPath.value = response.data.implementation_path
       papersAnalysis.value = response.data.papers_analysis || []
+      pathTimings.value = response.data.timings || null
       ElMessage.success('实现路径生成成功！')
     }
   } catch (error) {
@@ -787,6 +879,10 @@ const generateImplementationPath = async () => {
   } finally {
     pathLoading.value = false
     generatingPath.value = false
+    if (pathProgressTimer) {
+      clearInterval(pathProgressTimer)
+      pathProgressTimer = null
+    }
   }
 }
 

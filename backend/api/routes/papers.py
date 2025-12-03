@@ -2,12 +2,13 @@
 论文相关路由
 """
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 import pydantic as pydantic
 import requests
 import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import time
 from database.database import save_paper, get_papers_by_query, get_db_connection, get_user_by_username
 from api.routes.auth import get_current_user
 from services.pdf import get_pdf_service
@@ -17,6 +18,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# =======================
+# 全局实现路径进度状态
+# =======================
+# key: task_id, value: 进度信息
+implementation_progress: Dict[str, Dict[str, Any]] = {}
 
 class PaperResponse(pydantic.BaseModel):
     arxiv_id: str
@@ -152,6 +159,8 @@ class GeneratePathRequest(pydantic.BaseModel):
     user_requirement: Optional[str] = None  # 用户需求描述（可选，如果提供history_id则从历史获取）
     history_id: Optional[int] = None  # 匹配历史ID（可选，如果提供则从历史获取需求）
     max_pages_per_paper: int = 20  # 每篇论文最大提取页数
+    # 由前端生成的任务ID，用于实时查询进度（例如 Date.now().toString()）
+    task_id: Optional[str] = None
 
 class PaperAnalysisResponse(pydantic.BaseModel):
     """论文分析结果"""
@@ -160,6 +169,8 @@ class PaperAnalysisResponse(pydantic.BaseModel):
     analysis: dict
     status: str  # success, error
     error_message: Optional[str] = None
+    # timings 中记录该论文从 PDF 解析到 LLM 精读的耗时（毫秒）
+    timings: Optional[Dict[str, Any]] = None
 
 class ImplementationPathResponse(pydantic.BaseModel):
     """实现路径响应"""
@@ -167,6 +178,8 @@ class ImplementationPathResponse(pydantic.BaseModel):
     implementation_path: dict
     status: str  # success, error
     error_message: Optional[str] = None
+    # timings 记录整体耗时信息：包括各阶段耗时和总耗时（毫秒）
+    timings: Optional[Dict[str, Any]] = None
 
 
 async def process_paper(
@@ -175,6 +188,7 @@ async def process_paper(
     paper: dict,
     user_requirement: str,
     max_pages_per_paper: int,
+    task_id: Optional[str] = None,
 ) -> Tuple[PaperAnalysisResponse, Optional[dict]]:
     """
     并发处理单篇论文：下载 PDF + 调用 LLM 进行精读分析
@@ -191,15 +205,30 @@ async def process_paper(
     try:
         logger.info(f"开始分析论文: {title} ({arxiv_id})")
 
-        # 使用线程池下载 / 解析 PDF，避免阻塞事件循环
+        # ==============================
+        # 1. 下载 / 解析 PDF（在线程池中）
+        # ==============================
+        t_pdf_start = time.perf_counter()
         pdf_content = await asyncio.to_thread(
             pdf_service.get_paper_content,
             pdf_url,
             arxiv_id,
             max_pages=max_pages_per_paper,
         )
+        t_pdf_end = time.perf_counter()
+        pdf_duration_ms = int((t_pdf_end - t_pdf_start) * 1000)
+
+        # 更新进度：PDF 阶段完成（或失败时也记录耗时）
+        if task_id and task_id in implementation_progress:
+            paper_progress = implementation_progress[task_id]["papers"].get(arxiv_id)
+            if paper_progress is not None:
+                paper_progress["timings"]["pdf_ms"] = pdf_duration_ms
+                paper_progress["status"] = "pdf_done" if pdf_content else "pdf_failed"
 
         if not pdf_content:
+            logger.warning(
+                f"论文 {arxiv_id} PDF 获取失败，耗时 {pdf_duration_ms} ms"
+            )
             return (
                 PaperAnalysisResponse(
                     arxiv_id=arxiv_id,
@@ -207,17 +236,41 @@ async def process_paper(
                     analysis={},
                     status="error",
                     error_message="无法获取PDF内容",
+                    timings={
+                        "pdf_ms": pdf_duration_ms,
+                        "llm_ms": None,
+                        "total_ms": pdf_duration_ms,
+                    },
                 ),
                 None,
             )
 
-        # AI 精读分析（本身就是异步的）
+        # ==============================
+        # 2. LLM 精读分析
+        # ==============================
+        t_llm_start = time.perf_counter()
         analysis = await llm_service.analyze_paper_with_router(
             paper_title=title,
             paper_abstract=abstract,
             pdf_content=pdf_content,
             user_requirement=user_requirement,
         )
+        t_llm_end = time.perf_counter()
+        llm_duration_ms = int((t_llm_end - t_llm_start) * 1000)
+
+        total_ms = pdf_duration_ms + llm_duration_ms
+        logger.info(
+            f"论文 {arxiv_id} 分析完成：PDF解析 {pdf_duration_ms} ms，"
+            f"LLM 精读 {llm_duration_ms} ms，总计 {total_ms} ms"
+        )
+
+        # 更新进度：LLM 阶段完成
+        if task_id and task_id in implementation_progress:
+            paper_progress = implementation_progress[task_id]["papers"].get(arxiv_id)
+            if paper_progress is not None:
+                paper_progress["timings"]["llm_ms"] = llm_duration_ms
+                paper_progress["timings"]["total_ms"] = total_ms
+                paper_progress["status"] = "done"
 
         if "error" in analysis:
             return (
@@ -227,6 +280,11 @@ async def process_paper(
                     analysis={},
                     status="error",
                     error_message=analysis.get("error", "分析失败"),
+                    timings={
+                        "pdf_ms": pdf_duration_ms,
+                        "llm_ms": llm_duration_ms,
+                        "total_ms": total_ms,
+                    },
                 ),
                 None,
             )
@@ -236,6 +294,11 @@ async def process_paper(
             "paper_title": title,
             "paper_abstract": abstract,
             "analysis": analysis,
+            "timings": {
+                "pdf_ms": pdf_duration_ms,
+                "llm_ms": llm_duration_ms,
+                "total_ms": total_ms,
+            },
         }
 
         return (
@@ -244,6 +307,11 @@ async def process_paper(
                 title=title,
                 analysis=analysis,
                 status="success",
+                timings={
+                    "pdf_ms": pdf_duration_ms,
+                    "llm_ms": llm_duration_ms,
+                    "total_ms": total_ms,
+                },
             ),
             summary_data,
         )
@@ -257,6 +325,11 @@ async def process_paper(
                 analysis={},
                 status="error",
                 error_message=str(e),
+                timings={
+                    "pdf_ms": None,
+                    "llm_ms": None,
+                    "total_ms": None,
+                },
             ),
             None,
         )
@@ -277,6 +350,9 @@ async def generate_implementation_path(
     5. 综合多篇论文的分析结果，生成实现路径
     """
     try:
+        overall_start = time.perf_counter()
+        task_id = request.task_id
+
         if not request.paper_ids:
             raise HTTPException(status_code=400, detail="论文ID列表不能为空")
         
@@ -331,6 +407,28 @@ async def generate_implementation_path(
                 status_code=404, 
                 detail=f"部分论文未找到: {', '.join(missing_ids)}"
             )
+
+        # 初始化进度结构
+        if task_id:
+            implementation_progress[task_id] = {
+                "status": "running",
+                "current_step": "正在解析PDF并进行论文精读",
+                "total_papers": len(papers),
+                "completed_papers": 0,
+                "papers": {
+                    p["arxiv_id"]: {
+                        "arxiv_id": p["arxiv_id"],
+                        "title": p["title"],
+                        "status": "pending",  # pending / pdf_done / pdf_failed / done / error
+                        "timings": {
+                            "pdf_ms": None,
+                            "llm_ms": None,
+                            "total_ms": None,
+                        },
+                    }
+                    for p in papers
+                },
+            }
         
         # 对每篇论文进行 PDF 精读分析（并发执行）
         papers_analysis: List[PaperAnalysisResponse] = []
@@ -346,6 +444,7 @@ async def generate_implementation_path(
                 paper=paper,
                 user_requirement=user_requirement,
                 max_pages_per_paper=max_pages_per_paper,
+                task_id=task_id,
             )
             for paper in papers
         ]
@@ -371,6 +470,10 @@ async def generate_implementation_path(
             if summary_data:
                 papers_analysis_data.append(summary_data)
 
+            # 单篇完成后，更新整体 completed_papers
+            if task_id and task_id in implementation_progress:
+                implementation_progress[task_id]["completed_papers"] += 1
+
         # 如果至少有一篇论文分析成功，生成实现路径
         successful_analyses = [p for p in papers_analysis_data if p]
         
@@ -384,18 +487,40 @@ async def generate_implementation_path(
         
         # 生成综合实现路径
         try:
+            if task_id and task_id in implementation_progress:
+                implementation_progress[task_id]["current_step"] = "正在生成综合实现路径"
+
+            t_impl_start = time.perf_counter()
             raw_implementation_path = await llm_service.generate_implementation_path(
                 papers_analysis=successful_analyses,
                 user_requirement=request.user_requirement
             )
+            t_impl_end = time.perf_counter()
+            impl_duration_ms = int((t_impl_end - t_impl_start) * 1000)
 
             if "error" in raw_implementation_path:
-                return ImplementationPathResponse(
+                resp = ImplementationPathResponse(
                     papers_analysis=papers_analysis,
                     implementation_path={},
                     status="error",
-                    error_message=raw_implementation_path.get("error", "生成实现路径失败")
+                    error_message=raw_implementation_path.get("error", "生成实现路径失败"),
+                    timings={
+                        "implementation_path_ms": impl_duration_ms,
+                        "total_ms": int((time.perf_counter() - overall_start) * 1000),
+                        "per_paper": [
+                            {
+                                "arxiv_id": p.arxiv_id,
+                                "title": p.title,
+                                "timings": p.timings,
+                            }
+                            for p in papers_analysis
+                        ],
+                    },
                 )
+                if task_id and task_id in implementation_progress:
+                    implementation_progress[task_id]["status"] = "error"
+                    implementation_progress[task_id]["current_step"] = "生成实现路径失败"
+                return resp
 
             def normalize_implementation_path(data: dict) -> dict:
                 """
@@ -498,14 +623,42 @@ async def generate_implementation_path(
 
             implementation_path = normalize_implementation_path(raw_implementation_path)
 
-            return ImplementationPathResponse(
+            overall_end = time.perf_counter()
+            total_ms = int((overall_end - overall_start) * 1000)
+
+            logger.info(
+                f"实现路径生成完成：LLM 汇总耗时 {impl_duration_ms} ms，总接口耗时 {total_ms} ms"
+            )
+
+            resp = ImplementationPathResponse(
                 papers_analysis=papers_analysis,
                 implementation_path=implementation_path,
-                status="success"
+                status="success",
+                timings={
+                    "implementation_path_ms": impl_duration_ms,
+                    "total_ms": total_ms,
+                    "per_paper": [
+                        {
+                            "arxiv_id": p.arxiv_id,
+                            "title": p.title,
+                            "timings": p.timings,
+                        }
+                        for p in papers_analysis
+                    ],
+                },
             )
+
+            if task_id and task_id in implementation_progress:
+                implementation_progress[task_id]["status"] = "finished"
+                implementation_progress[task_id]["current_step"] = "实现路径生成完成"
+
+            return resp
             
         except Exception as e:
             logger.error(f"生成实现路径失败: {e}")
+            if task_id and task_id in implementation_progress:
+                implementation_progress[task_id]["status"] = "error"
+                implementation_progress[task_id]["current_step"] = "生成实现路径失败"
             return ImplementationPathResponse(
                 papers_analysis=papers_analysis,
                 implementation_path={},
@@ -517,4 +670,28 @@ async def generate_implementation_path(
         raise
     except Exception as e:
         logger.error(f"生成实现路径接口失败: {e}")
+        if request.task_id and request.task_id in implementation_progress:
+            implementation_progress[request.task_id]["status"] = "error"
+            implementation_progress[request.task_id]["current_step"] = "接口执行失败"
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+
+
+@router.get("/implementation-progress/{task_id}")
+async def get_implementation_progress(
+    task_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    查询实现路径生成的实时进度
+    由前端在调用 /generate-implementation-path 时传入的 task_id 标识
+    """
+    progress = implementation_progress.get(task_id)
+    if not progress:
+        return {
+            "status": "unknown",
+            "current_step": "未找到该任务",
+            "total_papers": 0,
+            "completed_papers": 0,
+            "papers": {},
+        }
+    return progress

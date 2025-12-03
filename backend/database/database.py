@@ -120,6 +120,21 @@ def init_db():
             )
         """)
         
+        # 创建论文解析内容缓存表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS paper_content_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                arxiv_id VARCHAR(20) NOT NULL,
+                pdf_url TEXT NOT NULL,
+                content TEXT NOT NULL,
+                max_pages INTEGER DEFAULT 20,
+                use_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(arxiv_id, max_pages)
+            )
+        """)
+        
         conn.commit()
         conn.close()
         logger.info("数据库初始化成功")
@@ -324,3 +339,93 @@ def get_match_results_by_history_id(history_id: int) -> List[dict]:
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return results
+
+def get_paper_content_cache(arxiv_id: str, max_pages: int = 20) -> Optional[dict]:
+    """
+    从缓存中获取论文解析内容
+    
+    Args:
+        arxiv_id: 论文的arXiv ID
+        max_pages: 最大页数（用于匹配缓存）
+        
+    Returns:
+        如果找到缓存，返回包含content和use_count的字典；否则返回None
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT content, use_count, max_pages 
+        FROM paper_content_cache 
+        WHERE arxiv_id = ? AND max_pages = ?
+    """, (arxiv_id, max_pages))
+    result = cursor.fetchone()
+    conn.close()
+    
+    if result:
+        return {
+            "content": result["content"],
+            "use_count": result["use_count"],
+            "max_pages": result["max_pages"]
+        }
+    return None
+
+def increment_paper_content_use_count(arxiv_id: str, max_pages: int = 20) -> bool:
+    """
+    增加论文解析内容的使用次数
+    
+    Args:
+        arxiv_id: 论文的arXiv ID
+        max_pages: 最大页数
+        
+    Returns:
+        是否成功更新
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE paper_content_cache 
+            SET use_count = use_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE arxiv_id = ? AND max_pages = ?
+        """, (arxiv_id, max_pages))
+        
+        updated = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return updated
+    except Exception as e:
+        logger.error(f"更新使用次数失败 {arxiv_id}: {e}")
+        return False
+
+def save_paper_content_cache(arxiv_id: str, pdf_url: str, content: str, max_pages: int = 20) -> bool:
+    """
+    保存论文解析内容到缓存
+    
+    Args:
+        arxiv_id: 论文的arXiv ID
+        pdf_url: PDF的URL
+        content: 解析后的文本内容
+        max_pages: 最大页数
+        
+    Returns:
+        是否保存成功
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 使用 INSERT OR REPLACE 来更新已存在的记录
+        cursor.execute("""
+            INSERT OR REPLACE INTO paper_content_cache 
+            (arxiv_id, pdf_url, content, max_pages, use_count, updated_at)
+            VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+        """, (arxiv_id, pdf_url, content, max_pages))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"论文解析内容已保存到缓存: {arxiv_id}")
+        return True
+    except Exception as e:
+        logger.error(f"保存论文解析内容失败 {arxiv_id}: {e}")
+        return False
