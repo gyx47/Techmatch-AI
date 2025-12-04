@@ -1,7 +1,7 @@
 """
 论文相关路由
 """
-from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, Request
 from typing import List, Optional, Tuple, Dict, Any
 import pydantic as pydantic
 import requests
@@ -9,18 +9,27 @@ import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import time
-from database.database import save_paper, get_papers_by_query, get_db_connection, get_user_by_username
+from database.database import (
+    save_paper,
+    get_papers_by_query,
+    get_db_connection,
+    get_user_by_username,
+    save_implementation_path_history,
+    get_implementation_path_history_by_history_id,
+    get_all_implementation_path_history,
+)
 from api.routes.auth import get_current_user
-from services.pdf import get_pdf_service
-from services.llm_service import get_llm_service
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+from services.pdf import get_pdf_service
+from services.llm_service import get_llm_service
+
 # =======================
-# 全局实现路径进度状态
+# 全局实现路径进度状态（本地模式）
 # =======================
 # key: task_id, value: 进度信息
 implementation_progress: Dict[str, Dict[str, Any]] = {}
@@ -249,6 +258,7 @@ async def process_paper(
         # 2. LLM 精读分析
         # ==============================
         t_llm_start = time.perf_counter()
+        logger.info(f"开始 LLM 精读分析: {arxiv_id}")
         analysis = await llm_service.analyze_paper_with_router(
             paper_title=title,
             paper_abstract=abstract,
@@ -256,7 +266,9 @@ async def process_paper(
             user_requirement=user_requirement,
         )
         t_llm_end = time.perf_counter()
-        llm_duration_ms = int((t_llm_end - t_llm_start) * 1000)
+        # 使用 round 而不是 int，确保至少显示 1ms（如果耗时 < 1ms）
+        llm_duration_ms = max(1, round((t_llm_end - t_llm_start) * 1000))
+        logger.info(f"LLM 精读分析完成: {arxiv_id}, 耗时: {llm_duration_ms} ms")
 
         total_ms = pdf_duration_ms + llm_duration_ms
         logger.info(
@@ -334,364 +346,580 @@ async def process_paper(
             None,
         )
 
-@router.post("/generate-implementation-path", response_model=ImplementationPathResponse)
+def normalize_implementation_path(data: dict) -> dict:
+    """
+    根据 LLM 返回的新格式，构造前端友好的实现路径结构。
+
+    LLM 返回的顶层结构示例：
+    {
+        "architectural_decision": {...},
+        "system_architecture": {...},
+        "development_roadmap_detailed": [...],
+        "risk_mitigation": {...}
+    }
+    """
+    # 如果已经是前端期望的新结构，直接返回
+    if data.get("overview") or data.get("implementation_phases"):
+        return data
+
+    architectural_decision = data.get("architectural_decision", {}) or {}
+    system_architecture = data.get("system_architecture", {}) or {}
+    roadmap = data.get("development_roadmap_detailed", []) or []
+    risk_mitigation = data.get("risk_mitigation", {}) or {}
+
+    # 整体概述：优先使用新的 tradeoff_reasoning，其次 reasoning，再加上 pipeline 描述
+    overview_parts = []
+    if architectural_decision.get("tradeoff_reasoning"):
+        overview_parts.append(str(architectural_decision["tradeoff_reasoning"]))
+    elif architectural_decision.get("reasoning"):
+        overview_parts.append(str(architectural_decision["reasoning"]))
+
+    if system_architecture.get("pipeline_description"):
+        overview_parts.append(str(system_architecture["pipeline_description"]))
+
+    overview = "\n\n".join(overview_parts) if overview_parts else None
+
+    # 技术选型：直接暴露当前 LLM 提供的 tech_stack + 选中的 methodology
+    tech_stack = system_architecture.get("tech_stack") or []
+    integration_strategy = (
+        architectural_decision.get("selected_methodology")
+        or architectural_decision.get("discarded_methodologies")
+        or ""
+    )
+    technology_selection = (
+        {
+            "primary_techniques": tech_stack,
+            "integration_strategy": integration_strategy,
+        }
+        if tech_stack or integration_strategy
+        else None
+    )
+
+    # 实施阶段：从 development_roadmap_detailed 里提取 phase / checklist / definition_of_done
+    # 新格式支持：requirement_alignment, user_value, goals, deliverables, checklist, definition_of_done
+    implementation_phases = []
+    for phase in roadmap:
+        if not isinstance(phase, dict):
+            continue
+        name = phase.get("phase") or phase.get("name") or ""
+        checklist = phase.get("checklist") or []
+        definition_of_done = phase.get("definition_of_done")
+        # 新增字段：需求对齐和用户价值
+        requirement_alignment = phase.get("requirement_alignment")
+        user_value = phase.get("user_value")
+        goals = phase.get("goals") or []
+        deliverables = phase.get("deliverables") or []
+
+        # 确保 objectives 和 key_tasks 有区别：
+        # - objectives 应该是高层次的目标（goals），如果没有 goals 则从 checklist 中提取关键点
+        # - key_tasks 应该是具体的执行任务（checklist）
+        # 如果 LLM 只返回了 checklist，我们需要区分使用
+        if goals:
+            # 有 goals，直接使用
+            objectives_list = goals
+        elif checklist:
+            # 没有 goals，尝试从 checklist 中提取目标性描述（通常 checklist 更具体，我们可以直接使用）
+            # 但为了区分，我们可以把 checklist 作为 key_tasks，objectives 留空或使用阶段名称
+            objectives_list = [f"完成 {name} 阶段的所有关键任务"]  # 至少给一个占位
+        else:
+            objectives_list = []
+
+        implementation_phases.append(
+            {
+                "phase": name,
+                "name": name,
+                "estimated_time": "",  # 新格式中不再提供具体天数，这里留空占位
+                "requirement_alignment": requirement_alignment,  # 该阶段如何服务于用户需求
+                "user_value": user_value,  # 该阶段完成后用户能获得什么价值
+                "objectives": objectives_list,  # 目标（高层次）
+                "deliverables": deliverables if deliverables else ([definition_of_done] if definition_of_done else []),
+                "key_tasks": checklist,  # 关键任务（具体执行步骤）
+                "definition_of_done": definition_of_done,  # 验收标准
+                # 保留原始数据，方便调试和前端使用
+                "raw_phase_data": phase,
+            }
+        )
+
+    # 风险评估：使用 risk_mitigation 的 key 作为风险项，value 作为对应策略
+    technical_risks = []
+    mitigation_strategies = []
+    for key, value in risk_mitigation.items():
+        technical_risks.append(str(key))
+        if value:
+            mitigation_strategies.append(str(value))
+
+    risk_assessment = (
+        {
+            "technical_risks": technical_risks or None,
+            "mitigation_strategies": mitigation_strategies or None,
+        }
+        if risk_mitigation
+        else None
+    )
+
+    # 成功标准：从每个阶段的 definition_of_done 收集
+    success_criteria = [
+        phase.get("definition_of_done")
+        for phase in roadmap
+        if isinstance(phase, dict) and phase.get("definition_of_done")
+    ]
+
+    normalized = {
+        "overview": overview,
+        "technology_selection": technology_selection,
+        "implementation_phases": implementation_phases or None,
+        "risk_assessment": risk_assessment,
+        "success_criteria": success_criteria or None,
+        # 同时把原始结构也暴露给前端，便于展示更详细的信息
+        "architectural_decision": architectural_decision or None,
+        "system_architecture": system_architecture or None,
+        "raw_development_roadmap": roadmap or None,
+        "raw_risk_mitigation": risk_mitigation or None,
+    }
+
+    # 去掉值为 None 的字段，避免前端多余判断
+    return {k: v for k, v in normalized.items() if v}
+
+
+async def core_generate_implementation_path(
+    task_id: str,
+    paper_ids: List[str],
+    user_requirement: str,
+    max_pages_per_paper: int = 20,
+    update_progress_callback: Optional[callable] = None,
+    user_id: Optional[int] = None,
+    history_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    核心业务逻辑：根据多篇论文生成实现路径。
+
+    既可在本地后台任务中调用，也可在 Redis/ARQ worker 中调用。
+    """
+    overall_start = time.perf_counter()
+
+    if not paper_ids:
+        raise ValueError("论文 ID 列表不能为空")
+
+    # 1. 从数据库获取论文信息
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    placeholders = ",".join(["?"] * len(paper_ids))
+    query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
+    cursor.execute(query, paper_ids)
+    papers = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if len(papers) != len(paper_ids):
+        found_ids = {p["arxiv_id"] for p in papers}
+        missing_ids = set(paper_ids) - found_ids
+        raise ValueError(f"部分论文未找到: {', '.join(missing_ids)}")
+
+    # 2. 初始化进度
+    implementation_progress[task_id] = {
+        "status": "running",
+        "current_step": "正在解析PDF并进行论文精读",
+        "total_papers": len(papers),
+        "completed_papers": 0,
+        "papers": {
+            p["arxiv_id"]: {
+                "arxiv_id": p["arxiv_id"],
+                "title": p["title"],
+                "status": "pending",
+                "timings": {
+                    "pdf_ms": None,
+                    "llm_ms": None,
+                    "total_ms": None,
+                },
+            }
+            for p in papers
+        },
+    }
+
+    if update_progress_callback:
+        await update_progress_callback(implementation_progress[task_id])
+
+    pdf_service = get_pdf_service()
+    llm_service = get_llm_service()
+
+    papers_analysis: List[PaperAnalysisResponse] = []
+    papers_analysis_data: List[dict] = []
+
+    # 为每篇论文创建处理任务
+    tasks = [
+        process_paper(
+            pdf_service=pdf_service,
+            llm_service=llm_service,
+            paper=paper,
+            user_requirement=user_requirement,
+            max_pages_per_paper=max_pages_per_paper,
+            task_id=task_id,
+        )
+        for paper in papers
+    ]
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for paper, result in zip(papers, results):
+        if isinstance(result, Exception):
+            logger.error(f"分析论文失败 {paper.get('arxiv_id')}: {result}")
+            papers_analysis.append(
+                PaperAnalysisResponse(
+                    arxiv_id=paper.get("arxiv_id", ""),
+                    title=paper.get("title", ""),
+                    analysis={},
+                    status="error",
+                    error_message=str(result),
+                )
+            )
+            pid = paper.get("arxiv_id")
+            if pid and pid in implementation_progress[task_id]["papers"]:
+                implementation_progress[task_id]["papers"][pid]["status"] = "error"
+            continue
+
+        analysis_resp, summary_data = result
+        papers_analysis.append(analysis_resp)
+        if summary_data:
+            papers_analysis_data.append(summary_data)
+
+        # 更新进度：把已完成的论文分析结果也放到进度中，方便前端实时查看
+        implementation_progress[task_id]["completed_papers"] += 1
+        # 将已完成的论文分析结果添加到进度中（确保不重复）
+        if "papers_analysis" not in implementation_progress[task_id]:
+            implementation_progress[task_id]["papers_analysis"] = []
+        # 检查是否已存在（避免重复添加）
+        existing_ids = {p.get("arxiv_id") for p in implementation_progress[task_id]["papers_analysis"]}
+        if analysis_resp.arxiv_id not in existing_ids:
+            implementation_progress[task_id]["papers_analysis"].append(analysis_resp.dict())
+
+    if update_progress_callback:
+        await update_progress_callback(implementation_progress[task_id])
+
+    successful_analyses = [p for p in papers_analysis_data if p]
+    if not successful_analyses:
+        implementation_progress[task_id]["status"] = "error"
+        implementation_progress[task_id]["current_step"] = "所有论文分析均失败，无法生成实现路径"
+        if update_progress_callback:
+            await update_progress_callback(implementation_progress[task_id])
+        return {
+            "papers_analysis": [p.dict() for p in papers_analysis],
+            "implementation_path": {},
+            "status": "error",
+            "error_message": "所有论文分析均失败，无法生成实现路径",
+        }
+
+    # 生成综合实现路径
+    try:
+        implementation_progress[task_id]["current_step"] = "正在生成综合实现路径"
+        if update_progress_callback:
+            await update_progress_callback(implementation_progress[task_id])
+
+        t_impl_start = time.perf_counter()
+        raw_implementation_path = await llm_service.generate_implementation_path(
+            papers_analysis=successful_analyses,
+            user_requirement=user_requirement,
+        )
+        t_impl_end = time.perf_counter()
+        impl_duration_ms = int((t_impl_end - t_impl_start) * 1000)
+
+        implementation_path = normalize_implementation_path(raw_implementation_path)
+
+        overall_end = time.perf_counter()
+        total_ms = int((overall_end - overall_start) * 1000)
+
+        result = {
+            "papers_analysis": [p.dict() for p in papers_analysis],
+            "implementation_path": implementation_path,
+            "status": "success",
+            "timings": {
+                "implementation_path_ms": impl_duration_ms,
+                "total_ms": total_ms,
+                "per_paper": [
+                    {
+                        "arxiv_id": p.arxiv_id,
+                        "title": p.title,
+                        "timings": p.timings,
+                    }
+                    for p in papers_analysis
+                ],
+            },
+        }
+
+        implementation_progress[task_id]["status"] = "finished"
+        implementation_progress[task_id]["current_step"] = "实现路径生成完成"
+        # 确保进度中包含完整的论文分析结果
+        implementation_progress[task_id]["papers_analysis"] = [p.dict() for p in papers_analysis]
+        implementation_progress[task_id]["result"] = result
+
+        if update_progress_callback:
+            await update_progress_callback(implementation_progress[task_id])
+
+        # 保存实现路径历史到数据库
+        if result.get("status") == "success" and user_id is not None:
+            try:
+                save_implementation_path_history(
+                    user_id=user_id,
+                    history_id=history_id,
+                    paper_ids=paper_ids,
+                    user_requirement=user_requirement,
+                    implementation_path=result["implementation_path"],
+                    papers_analysis=result["papers_analysis"],
+                    timings=result.get("timings"),
+                    status="success",
+                )
+            except Exception as e:
+                logger.error(f"保存实现路径历史失败: {e}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"生成实现路径失败: {e}")
+        implementation_progress[task_id]["status"] = "error"
+        implementation_progress[task_id]["current_step"] = "生成实现路径失败"
+        if update_progress_callback:
+            await update_progress_callback(implementation_progress[task_id])
+        return {
+            "papers_analysis": [p.dict() for p in papers_analysis],
+            "implementation_path": {},
+            "status": "error",
+            "error_message": f"生成实现路径失败: {str(e)}",
+        }
+
+
+@router.post("/generate-implementation-path")
 async def generate_implementation_path(
-    request: GeneratePathRequest,
-    current_user: str = Depends(get_current_user)
+    request: Request,
+    body: GeneratePathRequest,
+    current_user: str = Depends(get_current_user),
 ):
     """
-    基于选中的论文生成实现路径
-    
-    流程：
-    1. 获取用户需求（从history_id或直接提供）
-    2. 根据arxiv_id从数据库获取论文信息
-    3. 下载并解析每篇论文的PDF
-    4. 使用AI对PDF进行精读分析
-    5. 综合多篇论文的分析结果，生成实现路径
+    混合模式生成实现路径：
+    - 若检测到 Redis，可将任务投递到 ARQ 队列（异步执行）
+    - 若未检测到 Redis，则在当前进程内起本地后台任务
+
+    无论哪种模式，进度都可通过 /implementation-progress/{task_id} 查询。
     """
     try:
-        overall_start = time.perf_counter()
-        task_id = request.task_id
+        task_id = body.task_id or str(int(time.time() * 1000))
 
-        if not request.paper_ids:
+        if not body.paper_ids:
             raise HTTPException(status_code=400, detail="论文ID列表不能为空")
-        
+
+        if len(body.paper_ids) > 5:
+            raise HTTPException(status_code=400, detail="最多选择5篇论文进行分析")
+
         # 获取用户需求：优先从history_id获取，否则使用直接提供的需求
-        user_requirement = None
-        
-        if request.history_id:
-            # 从匹配历史获取需求
+        user_requirement: Optional[str] = None
+
+        if body.history_id:
             user = get_user_by_username(current_user)
             user_id = user["id"] if user else None
-            
+
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT search_desc FROM match_history WHERE id = ? AND user_id = ?",
-                (request.history_id, user_id)
+                (body.history_id, user_id),
             )
             history = cursor.fetchone()
             conn.close()
-            
+
             if history:
                 user_requirement = history["search_desc"]
             else:
-                raise HTTPException(status_code=404, detail="匹配历史不存在或无权限访问")
-        
+                raise HTTPException(
+                    status_code=404, detail="匹配历史不存在或无权限访问"
+                )
+
         if not user_requirement:
-            user_requirement = request.user_requirement
-        
+            user_requirement = body.user_requirement
+
         if not user_requirement or not user_requirement.strip():
-            raise HTTPException(status_code=400, detail="用户需求不能为空，请提供user_requirement或history_id")
-        
-        if len(request.paper_ids) > 5:
-            raise HTTPException(status_code=400, detail="最多选择5篇论文进行分析")
-
-        pdf_service = get_pdf_service()
-        llm_service = get_llm_service()
-        
-        # 从数据库获取论文信息
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        placeholders = ','.join(['?'] * len(request.paper_ids))
-        query = f"SELECT * FROM papers WHERE arxiv_id IN ({placeholders})"
-        cursor.execute(query, request.paper_ids)
-        papers = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        
-        if len(papers) != len(request.paper_ids):
-            found_ids = {p['arxiv_id'] for p in papers}
-            missing_ids = set(request.paper_ids) - found_ids
             raise HTTPException(
-                status_code=404, 
-                detail=f"部分论文未找到: {', '.join(missing_ids)}"
+                status_code=400,
+                detail="用户需求不能为空，请提供user_requirement或history_id",
             )
 
-        # 初始化进度结构
-        if task_id:
-            implementation_progress[task_id] = {
-                "status": "running",
-                "current_step": "正在解析PDF并进行论文精读",
-                "total_papers": len(papers),
-                "completed_papers": 0,
-                "papers": {
-                    p["arxiv_id"]: {
-                        "arxiv_id": p["arxiv_id"],
-                        "title": p["title"],
-                        "status": "pending",  # pending / pdf_done / pdf_failed / done / error
-                        "timings": {
-                            "pdf_ms": None,
-                            "llm_ms": None,
-                            "total_ms": None,
-                        },
-                    }
-                    for p in papers
-                },
-            }
-        
-        # 对每篇论文进行 PDF 精读分析（并发执行）
-        papers_analysis: List[PaperAnalysisResponse] = []
-        papers_analysis_data: List[dict] = []  # 用于生成实现路径
+        max_pages = body.max_pages_per_paper or 20
 
-        max_pages_per_paper = request.max_pages_per_paper or 20
-
-        # 为每篇论文创建一个处理任务
-        tasks = [
-            process_paper(
-                pdf_service=pdf_service,
-                llm_service=llm_service,
-                paper=paper,
-                user_requirement=user_requirement,
-                max_pages_per_paper=max_pages_per_paper,
-                task_id=task_id,
-            )
-            for paper in papers
-        ]
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for paper, result in zip(papers, results):
-            if isinstance(result, Exception):
-                logger.error(f"分析论文失败 {paper.get('arxiv_id')}: {result}")
-                papers_analysis.append(
-                    PaperAnalysisResponse(
-                        arxiv_id=paper.get("arxiv_id", ""),
-                        title=paper.get("title", ""),
-                        analysis={},
-                        status="error",
-                        error_message=str(result),
-                    )
-                )
-                continue
-
-            analysis_resp, summary_data = result
-            papers_analysis.append(analysis_resp)
-            if summary_data:
-                papers_analysis_data.append(summary_data)
-
-            # 单篇完成后，更新整体 completed_papers
-            if task_id and task_id in implementation_progress:
-                implementation_progress[task_id]["completed_papers"] += 1
-
-        # 如果至少有一篇论文分析成功，生成实现路径
-        successful_analyses = [p for p in papers_analysis_data if p]
-        
-        if not successful_analyses:
-            return ImplementationPathResponse(
-                papers_analysis=papers_analysis,
-                implementation_path={},
-                status="error",
-                error_message="所有论文分析均失败，无法生成实现路径"
-            )
-        
-        # 生成综合实现路径
-        try:
-            if task_id and task_id in implementation_progress:
-                implementation_progress[task_id]["current_step"] = "正在生成综合实现路径"
-
-            t_impl_start = time.perf_counter()
-            raw_implementation_path = await llm_service.generate_implementation_path(
-                papers_analysis=successful_analyses,
-                user_requirement=request.user_requirement
-            )
-            t_impl_end = time.perf_counter()
-            impl_duration_ms = int((t_impl_end - t_impl_start) * 1000)
-
-            if "error" in raw_implementation_path:
-                resp = ImplementationPathResponse(
-                    papers_analysis=papers_analysis,
-                    implementation_path={},
-                    status="error",
-                    error_message=raw_implementation_path.get("error", "生成实现路径失败"),
-                    timings={
-                        "implementation_path_ms": impl_duration_ms,
-                        "total_ms": int((time.perf_counter() - overall_start) * 1000),
-                        "per_paper": [
-                            {
-                                "arxiv_id": p.arxiv_id,
-                                "title": p.title,
-                                "timings": p.timings,
-                            }
-                            for p in papers_analysis
-                        ],
-                    },
-                )
-                if task_id and task_id in implementation_progress:
-                    implementation_progress[task_id]["status"] = "error"
-                    implementation_progress[task_id]["current_step"] = "生成实现路径失败"
-                return resp
-
-            def normalize_implementation_path(data: dict) -> dict:
-                """
-                根据 LLM 返回的新格式，构造前端友好的实现路径结构。
-
-                LLM 返回的顶层结构示例：
-                {
-                    "architectural_decision": {...},
-                    "system_architecture": {...},
-                    "development_roadmap_detailed": [...],
-                    "risk_mitigation": {...}
-                }
-                """
-                # 如果已经是前端期望的新结构，直接返回
-                if data.get("overview") or data.get("implementation_phases"):
-                    return data
-
-                architectural_decision = data.get("architectural_decision", {}) or {}
-                system_architecture = data.get("system_architecture", {}) or {}
-                roadmap = data.get("development_roadmap_detailed", []) or []
-                risk_mitigation = data.get("risk_mitigation", {}) or {}
-
-                # 整体概述：优先使用新的 tradeoff_reasoning，其次 reasoning，再加上 pipeline 描述
-                overview_parts = []
-                if architectural_decision.get("tradeoff_reasoning"):
-                    overview_parts.append(str(architectural_decision["tradeoff_reasoning"]))
-                elif architectural_decision.get("reasoning"):
-                    overview_parts.append(str(architectural_decision["reasoning"]))
-
-                if system_architecture.get("pipeline_description"):
-                    overview_parts.append(str(system_architecture["pipeline_description"]))
-
-                overview = "\n\n".join(overview_parts) if overview_parts else None
-
-                # 技术选型：直接暴露当前 LLM 提供的 tech_stack + 选中的 methodology
-                tech_stack = system_architecture.get("tech_stack") or []
-                integration_strategy = (
-                    architectural_decision.get("selected_methodology")
-                    or architectural_decision.get("discarded_methodologies")
-                    or ""
-                )
-                technology_selection = {
-                    "primary_techniques": tech_stack,
-                    "integration_strategy": integration_strategy,
-                } if tech_stack or integration_strategy else None
-
-                # 实施阶段：从 development_roadmap_detailed 里提取 phase / checklist / definition_of_done
-                implementation_phases = []
-                for phase in roadmap:
-                    if not isinstance(phase, dict):
-                        continue
-                    name = phase.get("phase") or phase.get("name") or ""
-                    checklist = phase.get("checklist") or []
-                    definition_of_done = phase.get("definition_of_done")
-
-                    implementation_phases.append({
-                        "phase": name,
-                        "name": name,
-                        "estimated_time": "",  # 新格式中不再提供具体天数，这里留空占位
-                        "objectives": checklist,
-                        "deliverables": [definition_of_done] if definition_of_done else [],
-                        "key_tasks": checklist,
-                    })
-
-                # 风险评估：使用 risk_mitigation 的 key 作为风险项，value 作为对应策略
-                technical_risks = []
-                mitigation_strategies = []
-                for key, value in risk_mitigation.items():
-                    technical_risks.append(str(key))
-                    if value:
-                        mitigation_strategies.append(str(value))
-
-                risk_assessment = {
-                    "technical_risks": technical_risks or None,
-                    "mitigation_strategies": mitigation_strategies or None,
-                } if risk_mitigation else None
-
-                # 成功标准：从每个阶段的 definition_of_done 收集
-                success_criteria = [
-                    phase.get("definition_of_done")
-                    for phase in roadmap
-                    if isinstance(phase, dict) and phase.get("definition_of_done")
-                ]
-
-                normalized = {
-                    "overview": overview,
-                    "technology_selection": technology_selection,
-                    "implementation_phases": implementation_phases or None,
-                    "risk_assessment": risk_assessment,
-                    "success_criteria": success_criteria or None,
-                    # 同时把原始结构也暴露给前端，便于展示更详细的信息
-                    "architectural_decision": architectural_decision or None,
-                    "system_architecture": system_architecture or None,
-                    "raw_development_roadmap": roadmap or None,
-                    "raw_risk_mitigation": risk_mitigation or None,
-                }
-
-                # 去掉值为 None 的字段，避免前端多余判断
-                return {k: v for k, v in normalized.items() if v}
-
-            implementation_path = normalize_implementation_path(raw_implementation_path)
-
-            overall_end = time.perf_counter()
-            total_ms = int((overall_end - overall_start) * 1000)
-
-            logger.info(
-                f"实现路径生成完成：LLM 汇总耗时 {impl_duration_ms} ms，总接口耗时 {total_ms} ms"
-            )
-
-            resp = ImplementationPathResponse(
-                papers_analysis=papers_analysis,
-                implementation_path=implementation_path,
-                status="success",
-                timings={
-                    "implementation_path_ms": impl_duration_ms,
-                    "total_ms": total_ms,
-                    "per_paper": [
-                        {
-                            "arxiv_id": p.arxiv_id,
-                            "title": p.title,
-                            "timings": p.timings,
-                        }
-                        for p in papers_analysis
-                    ],
-                },
-            )
-
-            if task_id and task_id in implementation_progress:
-                implementation_progress[task_id]["status"] = "finished"
-                implementation_progress[task_id]["current_step"] = "实现路径生成完成"
-
-            return resp
+        # 场景 A：Redis 可用 -> 扔给 ARQ 队列
+        if getattr(request.app.state, "use_redis", False):
+            user = get_user_by_username(current_user)
+            user_id = user["id"] if user else None
             
-        except Exception as e:
-            logger.error(f"生成实现路径失败: {e}")
-            if task_id and task_id in implementation_progress:
-                implementation_progress[task_id]["status"] = "error"
-                implementation_progress[task_id]["current_step"] = "生成实现路径失败"
-            return ImplementationPathResponse(
-                papers_analysis=papers_analysis,
-                implementation_path={},
-                status="error",
-                error_message=f"生成实现路径失败: {str(e)}"
+            redis_pool = request.app.state.redis_pool
+            # enqueue_job 返回 job 对象
+            await redis_pool.enqueue_job(
+                "task_wrapper_generate_path",  # worker.py 里的函数名
+                task_id,
+                body.paper_ids,
+                user_requirement,
+                max_pages,
+                user_id,  # 传递 user_id
+                body.history_id,  # 传递 history_id
+                _job_id=task_id,  # 强制使用前端传来的 task_id 作为 Job ID
             )
-        
+            return {"status": "queued", "task_id": task_id, "mode": "redis"}
+
+        # 场景 B：Redis 不可用 -> 本地后台任务（asyncio.create_task）
+        user = get_user_by_username(current_user)
+        user_id = user["id"] if user else None
+
+        async def update_local_progress(state: Dict[str, Any]):
+            implementation_progress[task_id] = state
+
+        async def _run_local_task():
+            await core_generate_implementation_path(
+                task_id=task_id,
+                paper_ids=body.paper_ids,
+                user_requirement=user_requirement or "",
+                max_pages_per_paper=max_pages,
+                update_progress_callback=update_local_progress,
+                user_id=user_id,
+                history_id=body.history_id,
+            )
+
+        asyncio.create_task(_run_local_task())
+
+        return {"status": "processing", "task_id": task_id, "mode": "local"}
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"生成实现路径接口失败: {e}")
-        if request.task_id and request.task_id in implementation_progress:
-            implementation_progress[request.task_id]["status"] = "error"
-            implementation_progress[request.task_id]["current_step"] = "接口执行失败"
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
 
 @router.get("/implementation-progress/{task_id}")
 async def get_implementation_progress(
+    request: Request,
     task_id: str,
     current_user: str = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
-    查询实现路径生成的实时进度
-    由前端在调用 /generate-implementation-path 时传入的 task_id 标识
+    统一查询实现路径生成的实时进度：
+    - 优先从本地内存 implementation_progress 中读取
+    - 若未命中且 Redis 已启用，则从 Redis 中读取 worker 写入的进度
+    
+    返回的进度中包含：
+    - status: 任务状态（running/finished/error）
+    - current_step: 当前步骤描述
+    - total_papers: 总论文数
+    - completed_papers: 已完成论文数
+    - papers: 每篇论文的进度状态
+    - papers_analysis: 已完成的论文分析结果列表（逐步更新）
+    - result: 最终结果（任务完成时包含完整的 implementation_path 和 papers_analysis）
     """
+    # 1. 先查本地内存
     progress = implementation_progress.get(task_id)
-    if not progress:
+    if progress:
+        # 确保返回的进度包含 papers_analysis（如果存在）
+        return progress
+
+    # 2. 如果本地没有，且 Redis 可用，则查 Redis
+    if getattr(request.app.state, "use_redis", False):
+        try:
+            redis = request.app.state.redis_pool
+            raw_progress = await redis.get(f"progress:{task_id}")
+            if raw_progress:
+                import json
+
+                progress_data = json.loads(raw_progress)
+                # 确保返回的进度包含 papers_analysis（如果存在）
+                return progress_data
+        except Exception as e:
+            logger.error(f"从 Redis 获取实现路径进度失败: {e}")
+
+    # 3. 兜底
+    return {
+        "status": "unknown",
+        "current_step": "未找到该任务",
+        "total_papers": 0,
+        "completed_papers": 0,
+        "papers": {},
+        "papers_analysis": [],
+    }
+
+
+@router.get("/implementation-path-history/{history_id}")
+async def get_implementation_path_history(
+    history_id: int,
+    current_user: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    获取指定匹配历史（话题）下所有生成过的实现路径方案
+    
+    返回该话题下所有历史方案的列表，按创建时间倒序排列。
+    """
+    try:
+        user = get_user_by_username(current_user)
+        user_id = user["id"] if user else None
+        
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="用户信息无效")
+        
+        # 验证 history_id 是否属于当前用户
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM match_history WHERE id = ? AND user_id = ?",
+            (history_id, user_id),
+        )
+        history = cursor.fetchone()
+        conn.close()
+        
+        if not history:
+            raise HTTPException(
+                status_code=404, detail="匹配历史不存在或无权限访问"
+            )
+        
+        # 获取该话题下的所有实现路径历史
+        history_list = get_implementation_path_history_by_history_id(
+            user_id=user_id,
+            history_id=history_id,
+        )
+        
         return {
-            "status": "unknown",
-            "current_step": "未找到该任务",
-            "total_papers": 0,
-            "completed_papers": 0,
-            "papers": {},
+            "history_id": history_id,
+            "total": len(history_list),
+            "items": history_list,
         }
-    return progress
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取实现路径历史失败: {e}")
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@router.get("/implementation-path-history")
+async def get_all_implementation_path_history_endpoint(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    获取当前用户的所有实现路径历史方案（不限制话题）
+    
+    支持分页查询，按创建时间倒序排列。
+    """
+    try:
+        user = get_user_by_username(current_user)
+        user_id = user["id"] if user else None
+        
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="用户信息无效")
+        
+        result = get_all_implementation_path_history(
+            user_id=user_id,
+            page=page,
+            page_size=page_size,
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取所有实现路径历史失败: {e}")
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")

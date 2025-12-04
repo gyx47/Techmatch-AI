@@ -135,6 +135,25 @@ def init_db():
             )
         """)
         
+        # 创建实现路径历史表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS implementation_path_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                history_id INTEGER,
+                paper_ids TEXT NOT NULL,
+                user_requirement TEXT NOT NULL,
+                implementation_path TEXT NOT NULL,
+                papers_analysis TEXT NOT NULL,
+                timings TEXT,
+                status VARCHAR(20) DEFAULT 'success',
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (history_id) REFERENCES match_history (id) ON DELETE SET NULL
+            )
+        """)
+        
         conn.commit()
         conn.close()
         logger.info("数据库初始化成功")
@@ -429,3 +448,154 @@ def save_paper_content_cache(arxiv_id: str, pdf_url: str, content: str, max_page
     except Exception as e:
         logger.error(f"保存论文解析内容失败 {arxiv_id}: {e}")
         return False
+
+def save_implementation_path_history(
+    user_id: Optional[int],
+    history_id: Optional[int],
+    paper_ids: List[str],
+    user_requirement: str,
+    implementation_path: dict,
+    papers_analysis: List[dict],
+    timings: Optional[dict] = None,
+    status: str = "success",
+    error_message: Optional[str] = None,
+) -> int:
+    """
+    保存实现路径历史记录
+    
+    Returns:
+        实现路径历史记录ID
+    """
+    import json
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO implementation_path_history (
+                user_id, history_id, paper_ids, user_requirement,
+                implementation_path, papers_analysis, timings, status, error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            history_id,
+            json.dumps(paper_ids),
+            user_requirement,
+            json.dumps(implementation_path),
+            json.dumps(papers_analysis),
+            json.dumps(timings) if timings else None,
+            status,
+            error_message,
+        ))
+        path_history_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"实现路径历史已保存，记录ID: {path_history_id}")
+        return path_history_id
+    except Exception as e:
+        logger.error(f"保存实现路径历史失败: {e}")
+        raise
+
+def get_implementation_path_history_by_history_id(
+    user_id: Optional[int],
+    history_id: int,
+) -> List[dict]:
+    """
+    根据匹配历史ID获取该话题下所有的实现路径历史
+    
+    Returns:
+        实现路径历史记录列表（按创建时间倒序）
+    """
+    import json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 只查询当前用户的记录，且 history_id 匹配
+    cursor.execute("""
+        SELECT * FROM implementation_path_history
+        WHERE user_id = ? AND history_id = ?
+        ORDER BY created_at DESC
+    """, (user_id, history_id))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        record = dict(row)
+        try:
+            record["paper_ids"] = json.loads(record["paper_ids"])
+            record["implementation_path"] = json.loads(record["implementation_path"])
+            record["papers_analysis"] = json.loads(record["papers_analysis"])
+            if record.get("timings"):
+                record["timings"] = json.loads(record["timings"])
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"解析实现路径历史记录失败 {record.get('id')}: {e}")
+            continue
+        results.append(record)
+    
+    return results
+
+def get_all_implementation_path_history(
+    user_id: Optional[int],
+    page: int = 1,
+    page_size: int = 20,
+) -> dict:
+    """
+    获取当前用户的所有实现路径历史（不限制话题）
+    
+    Returns:
+        {"total": int, "page": int, "page_size": int, "items": List[dict]}
+    """
+    import json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if user_id is None:
+        conn.close()
+        return {
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "items": []
+        }
+    
+    # 计算总数
+    cursor.execute("SELECT COUNT(*) as total FROM implementation_path_history WHERE user_id = ?", (user_id,))
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    cursor.execute("""
+        SELECT iph.*, mh.search_desc as topic_description
+        FROM implementation_path_history iph
+        LEFT JOIN match_history mh ON iph.history_id = mh.id
+        WHERE iph.user_id = ?
+        ORDER BY iph.created_at DESC
+        LIMIT ? OFFSET ?
+    """, (user_id, page_size, offset))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        record = dict(row)
+        try:
+            record["paper_ids"] = json.loads(record["paper_ids"])
+            record["implementation_path"] = json.loads(record["implementation_path"])
+            record["papers_analysis"] = json.loads(record["papers_analysis"])
+            if record.get("timings"):
+                record["timings"] = json.loads(record["timings"])
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(f"解析实现路径历史记录失败 {record.get('id')}: {e}")
+            continue
+        results.append(record)
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": results
+    }

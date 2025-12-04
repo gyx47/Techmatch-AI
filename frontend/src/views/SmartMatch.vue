@@ -3,8 +3,21 @@
     <!-- Hero Section 搜索区域 -->
     <div class="hero-section">
       <div class="hero-content">
-        <h1 class="hero-title">成果需求智能匹配</h1>
-        <p class="hero-subtitle">输入您的技术难题或成果描述，AI 将为您智能匹配最合适的合作伙伴</p>
+        <div class="hero-header">
+          <div>
+            <h1 class="hero-title">成果需求智能匹配</h1>
+            <p class="hero-subtitle">输入您的技术难题或成果描述，AI 将为您智能匹配最合适的合作伙伴</p>
+          </div>
+          <el-button 
+            type="primary" 
+            size="large"
+            @click="showAllHistoryDialog = true; loadAllImplementationPathHistory()"
+            style="margin-left: 20px; flex-shrink: 0"
+          >
+            <el-icon><Clock /></el-icon>
+            查看所有历史方案
+          </el-button>
+        </div>
 
         <div class="search-container">
           <el-input
@@ -57,6 +70,16 @@
             </el-button>
             <el-button @click="clearSelection" size="large">
               清空选择
+            </el-button>
+          </div>
+          <div class="action-buttons" v-if="currentHistoryId">
+            <el-button 
+              type="info" 
+              size="large"
+              @click="showHistoryDialog = true; loadImplementationPathHistory()"
+            >
+              <el-icon><Clock /></el-icon>
+              查看历史方案
             </el-button>
           </div>
         </div>
@@ -279,6 +302,19 @@
             >
               <el-card>
                 <h4>{{ phase.name }}</h4>
+                
+                <!-- 需求对齐：该阶段如何服务于用户需求 -->
+                <div v-if="phase.requirement_alignment" style="margin-bottom: 15px; padding: 10px; background: #e6f7ff; border-left: 3px solid #1890ff; border-radius: 4px">
+                  <strong>🎯 需求对齐：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.requirement_alignment }}</p>
+                </div>
+
+                <!-- 用户价值：该阶段完成后用户能获得什么价值 -->
+                <div v-if="phase.user_value" style="margin-bottom: 15px; padding: 10px; background: #f6ffed; border-left: 3px solid #52c41a; border-radius: 4px">
+                  <strong>💎 用户价值：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.user_value }}</p>
+                </div>
+
                 <div v-if="phase.objectives">
                   <strong>目标：</strong>
                   <ul>
@@ -300,6 +336,10 @@
                   >
                     {{ task }}
                   </el-tag>
+                </div>
+                <div v-if="phase.definition_of_done" style="margin-top: 15px; padding: 10px; background: #fff7e6; border-left: 3px solid #faad14; border-radius: 4px">
+                  <strong>✅ 验收标准：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.definition_of_done }}</p>
                 </div>
               </el-card>
             </el-timeline-item>
@@ -343,28 +383,298 @@
               :title="paper.title"
             >
               <div v-if="paper.status === 'success' && paper.analysis">
-                <div v-if="paper.analysis.core_techniques">
-                  <strong>核心技术：</strong>
-                  <el-tag 
-                    v-for="tech in paper.analysis.core_techniques" 
-                    :key="tech"
-                    style="margin: 3px"
-                  >
-                    {{ tech }}
-                  </el-tag>
-                </div>
-                <p v-if="paper.analysis.summary" style="margin-top: 10px">
-                  <strong>总结：</strong>{{ paper.analysis.summary }}
-                </p>
-                <p v-if="paper.analysis.key_implementation_details" style="margin-top: 10px">
-                  <strong>实现细节：</strong>{{ paper.analysis.key_implementation_details }}
-                </p>
-                <p v-if="paper.analysis.technical_advantages" style="margin-top: 10px">
-                  <strong>技术优势：</strong>{{ paper.analysis.technical_advantages }}
-                </p>
-                <p v-if="paper.analysis.implementation_challenges" style="margin-top: 10px">
-                  <strong>实现难点：</strong>{{ paper.analysis.implementation_challenges }}
-                </p>
+                <!-- 处理新的分析结果结构：paper.analysis 可能包含 paper_type 和 analysis 字段 -->
+                <template v-if="paper.analysis.analysis">
+                  <!-- 新格式：paper.analysis.analysis 包含实际的精读结果 -->
+                  <div class="paper-analysis-content">
+                    <el-tag v-if="paper.analysis.paper_type" type="info" style="margin-bottom: 15px">
+                      论文类型：{{ paper.analysis.paper_type }}
+                    </el-tag>
+                    
+                    <!-- 核心创新点 -->
+                    <div v-if="paper.analysis.analysis.big_idea" class="analysis-item">
+                      <h4>💡 核心创新点</h4>
+                      <p>{{ paper.analysis.analysis.big_idea }}</p>
+                    </div>
+
+                    <!-- 工程分析 -->
+                    <div v-if="paper.analysis.analysis.engineering_analysis" class="analysis-item">
+                      <h4>🔧 工程分析</h4>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.model_architecture">
+                        <strong>模型架构：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.model_architecture }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.input_spec" style="margin-top: 10px">
+                        <strong>输入规格：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.input_spec }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.output_spec" style="margin-top: 10px">
+                        <strong>输出规格：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.output_spec }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.loss_function" style="margin-top: 10px">
+                        <strong>损失函数：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.loss_function }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.key_hyperparameters && paper.analysis.analysis.engineering_analysis.key_hyperparameters.length > 0" style="margin-top: 10px">
+                        <strong>关键超参数：</strong>
+                        <el-tag 
+                          v-for="(param, idx) in paper.analysis.analysis.engineering_analysis.key_hyperparameters" 
+                          :key="idx"
+                          style="margin: 3px"
+                        >
+                          {{ param }}
+                        </el-tag>
+                      </div>
+                    </div>
+
+                    <!-- 训练流程 -->
+                    <div v-if="paper.analysis.analysis.training_procedure" class="analysis-item">
+                      <h4>📚 训练流程</h4>
+                      <div v-if="paper.analysis.analysis.training_procedure.data_processing">
+                        <strong>数据处理：</strong>
+                        <p>{{ paper.analysis.analysis.training_procedure.data_processing }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.training_procedure.optimization" style="margin-top: 10px">
+                        <strong>优化策略：</strong>
+                        <p>{{ paper.analysis.analysis.training_procedure.optimization }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.training_procedure.regularization_tricks && paper.analysis.analysis.training_procedure.regularization_tricks.length > 0" style="margin-top: 10px">
+                        <strong>正则化技巧：</strong>
+                        <ul>
+                          <li v-for="(trick, idx) in paper.analysis.analysis.training_procedure.regularization_tricks" :key="idx">
+                            {{ trick }}
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <!-- 推理策略 -->
+                    <div v-if="paper.analysis.analysis.inference_strategy" class="analysis-item">
+                      <h4>⚡ 推理策略</h4>
+                      <div v-if="paper.analysis.analysis.inference_strategy.sampling_method">
+                        <strong>采样方法：</strong>
+                        <p>{{ paper.analysis.analysis.inference_strategy.sampling_method }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.inference_strategy.latency_estimation" style="margin-top: 10px">
+                        <strong>延迟估算：</strong>
+                        <p>{{ paper.analysis.analysis.inference_strategy.latency_estimation }}</p>
+                      </div>
+                    </div>
+
+                    <!-- 可复现性 -->
+                    <div v-if="paper.analysis.analysis.reproducibility" class="analysis-item">
+                      <h4>🔬 可复现性</h4>
+                      <div v-if="paper.analysis.analysis.reproducibility.implementation_gap">
+                        <strong>实现难点：</strong>
+                        <p>{{ paper.analysis.analysis.reproducibility.implementation_gap }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.reproducibility.reproducibility_score" style="margin-top: 10px">
+                        <strong>可复现性评分：</strong>
+                        <el-rate 
+                          :model-value="parseInt(paper.analysis.analysis.reproducibility.reproducibility_score)" 
+                          disabled 
+                          show-score
+                          text-color="#ff9900"
+                          score-template="{value}"
+                        />
+                      </div>
+                    </div>
+
+                    <!-- 系统类论文的特殊字段 -->
+                    <div v-if="paper.analysis.analysis.system_components" class="analysis-item">
+                      <h4>🏗️ 系统组件</h4>
+                      <div v-if="paper.analysis.analysis.core_problem" style="margin-bottom: 15px">
+                        <strong>核心问题：</strong>
+                        <p>{{ paper.analysis.analysis.core_problem }}</p>
+                      </div>
+                      <div v-for="(component, idx) in paper.analysis.analysis.system_components" :key="idx" style="margin-top: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px">
+                        <strong>{{ component.name }}</strong>
+                        <p><em>{{ component.responsibility }}</em></p>
+                        <div v-if="component.inputs && component.inputs.length > 0" style="margin-top: 5px">
+                          <strong>输入：</strong>{{ component.inputs.join(', ') }}
+                        </div>
+                        <div v-if="component.outputs && component.outputs.length > 0" style="margin-top: 5px">
+                          <strong>输出：</strong>{{ component.outputs.join(', ') }}
+                        </div>
+                      </div>
+                      <div v-if="paper.analysis.analysis.variation_modeling" style="margin-top: 15px">
+                        <strong>变化建模：</strong>
+                        <p>{{ paper.analysis.analysis.variation_modeling.feature_model_type }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.runtime_policies" style="margin-top: 15px">
+                        <strong>运行时策略：</strong>
+                        <p>{{ paper.analysis.analysis.runtime_policies.threshold_definitions }}</p>
+                      </div>
+                    </div>
+
+                    <!-- 综述类论文 (Survey) -->
+                    <div v-if="paper.analysis.analysis.taxonomy_tree" class="analysis-item">
+                      <h4>📚 分类树</h4>
+                      <div v-if="paper.analysis.analysis.taxonomy_tree.root">
+                        <strong>领域：</strong>{{ paper.analysis.analysis.taxonomy_tree.root }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.taxonomy_tree.children && paper.analysis.analysis.taxonomy_tree.children.length > 0" style="margin-top: 10px">
+                        <strong>子类：</strong>
+                        <ul>
+                          <li v-for="(child, idx) in paper.analysis.analysis.taxonomy_tree.children" :key="idx">
+                            <strong>{{ child.name }}</strong>
+                            <span v-if="child.subtypes && child.subtypes.length > 0">
+                              ({{ child.subtypes.join(', ') }})
+                            </span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.comparison_matrix && paper.analysis.analysis.comparison_matrix.length > 0" class="analysis-item">
+                      <h4>⚖️ 方法对比矩阵</h4>
+                      <div v-for="(method, idx) in paper.analysis.analysis.comparison_matrix" :key="idx" style="margin-top: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px">
+                        <strong>{{ method.method_name }}</strong>
+                        <div v-if="method.pros && method.pros.length > 0" style="margin-top: 5px">
+                          <strong>优点：</strong>
+                          <ul>
+                            <li v-for="(pro, pidx) in method.pros" :key="pidx">{{ pro }}</li>
+                          </ul>
+                        </div>
+                        <div v-if="method.cons && method.cons.length > 0" style="margin-top: 5px">
+                          <strong>缺点：</strong>
+                          <ul>
+                            <li v-for="(con, cidx) in method.cons" :key="cidx">{{ con }}</li>
+                          </ul>
+                        </div>
+                        <div v-if="method.best_scenario" style="margin-top: 5px">
+                          <strong>适用场景：</strong>{{ method.best_scenario }}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.open_challenges && paper.analysis.analysis.open_challenges.length > 0" class="analysis-item">
+                      <h4>🔮 开放挑战</h4>
+                      <ul>
+                        <li v-for="(challenge, idx) in paper.analysis.analysis.open_challenges" :key="idx">
+                          {{ challenge }}
+                        </li>
+                      </ul>
+                    </div>
+
+                    <!-- 基准类论文 (Benchmark) -->
+                    <div v-if="paper.analysis.analysis.dataset_stats" class="analysis-item">
+                      <h4>📊 数据集统计</h4>
+                      <div v-if="paper.analysis.analysis.dataset_stats.num_samples">
+                        <strong>样本数量：</strong>{{ paper.analysis.analysis.dataset_stats.num_samples }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.dataset_stats.languages && paper.analysis.analysis.dataset_stats.languages.length > 0" style="margin-top: 5px">
+                        <strong>语言：</strong>{{ paper.analysis.analysis.dataset_stats.languages.join(', ') }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.dataset_stats.domains && paper.analysis.analysis.dataset_stats.domains.length > 0" style="margin-top: 5px">
+                        <strong>领域：</strong>{{ paper.analysis.analysis.dataset_stats.domains.join(', ') }}
+                      </div>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.collection_pipeline" class="analysis-item">
+                      <h4>🔄 数据收集流程</h4>
+                      <div v-if="paper.analysis.analysis.collection_pipeline.sources && paper.analysis.analysis.collection_pipeline.sources.length > 0">
+                        <strong>数据来源：</strong>{{ paper.analysis.analysis.collection_pipeline.sources.join(', ') }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.collection_pipeline.filtering_rules && paper.analysis.analysis.collection_pipeline.filtering_rules.length > 0" style="margin-top: 10px">
+                        <strong>过滤规则：</strong>
+                        <ul>
+                          <li v-for="(rule, idx) in paper.analysis.analysis.collection_pipeline.filtering_rules" :key="idx">{{ rule }}</li>
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.evaluation_protocol" class="analysis-item">
+                      <h4>📈 评估协议</h4>
+                      <div v-if="paper.analysis.analysis.evaluation_protocol.tasks && paper.analysis.analysis.evaluation_protocol.tasks.length > 0">
+                        <strong>任务：</strong>{{ paper.analysis.analysis.evaluation_protocol.tasks.join(', ') }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.evaluation_protocol.metrics && paper.analysis.analysis.evaluation_protocol.metrics.length > 0" style="margin-top: 10px">
+                        <strong>指标：</strong>{{ paper.analysis.analysis.evaluation_protocol.metrics.join(', ') }}
+                      </div>
+                    </div>
+
+                    <!-- 工业类论文 (Industry) -->
+                    <div v-if="paper.analysis.analysis.deployment_scale" class="analysis-item">
+                      <h4>🏭 部署规模</h4>
+                      <div v-if="paper.analysis.analysis.deployment_scale.qps">
+                        <strong>QPS：</strong>{{ paper.analysis.analysis.deployment_scale.qps }}
+                      </div>
+                      <div v-if="paper.analysis.analysis.deployment_scale.num_users" style="margin-top: 5px">
+                        <strong>用户规模：</strong>{{ paper.analysis.analysis.deployment_scale.num_users }}
+                      </div>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.lessons_learned && paper.analysis.analysis.lessons_learned.length > 0" class="analysis-item">
+                      <h4>💡 经验教训</h4>
+                      <ul>
+                        <li v-for="(lesson, idx) in paper.analysis.analysis.lessons_learned" :key="idx">
+                          {{ lesson }}
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div v-if="paper.analysis.analysis.negative_results && paper.analysis.analysis.negative_results.length > 0" class="analysis-item">
+                      <h4>❌ 失败案例</h4>
+                      <ul>
+                        <li v-for="(result, idx) in paper.analysis.analysis.negative_results" :key="idx">
+                          {{ result }}
+                        </li>
+                      </ul>
+                    </div>
+
+                    <!-- 理论类论文 (Theory) -->
+                    <div v-if="paper.analysis.analysis.core_theorems && paper.analysis.analysis.core_theorems.length > 0" class="analysis-item">
+                      <h4>📐 核心定理</h4>
+                      <div v-for="(theorem, idx) in paper.analysis.analysis.core_theorems" :key="idx" style="margin-top: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px">
+                        <strong>{{ theorem.name }}</strong>
+                        <p v-if="theorem.informal_statement" style="margin-top: 5px">{{ theorem.informal_statement }}</p>
+                        <div v-if="theorem.conditions && theorem.conditions.length > 0" style="margin-top: 5px">
+                          <strong>关键假设：</strong>
+                          <ul>
+                            <li v-for="(condition, cidx) in theorem.conditions" :key="cidx">{{ condition }}</li>
+                          </ul>
+                        </div>
+                        <div v-if="theorem.implications_for_practice" style="margin-top: 5px">
+                          <strong>工程启示：</strong>{{ theorem.implications_for_practice }}
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 如果没有任何匹配的字段，显示原始 JSON（调试用） -->
+                    <div v-if="!paper.analysis.analysis.big_idea && !paper.analysis.analysis.system_components && !paper.analysis.analysis.taxonomy_tree && !paper.analysis.analysis.dataset_stats && !paper.analysis.analysis.deployment_scale && !paper.analysis.analysis.core_theorems" class="analysis-item">
+                      <h4>📋 分析结果</h4>
+                      <pre style="background: #f5f7fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px">{{ JSON.stringify(paper.analysis.analysis, null, 2) }}</pre>
+                    </div>
+                  </div>
+                </template>
+                
+                <!-- 兼容旧格式：直接使用 paper.analysis -->
+                <template v-else>
+                  <div v-if="paper.analysis.core_techniques">
+                    <strong>核心技术：</strong>
+                    <el-tag 
+                      v-for="tech in paper.analysis.core_techniques" 
+                      :key="tech"
+                      style="margin: 3px"
+                    >
+                      {{ tech }}
+                    </el-tag>
+                  </div>
+                  <p v-if="paper.analysis.summary" style="margin-top: 10px">
+                    <strong>总结：</strong>{{ paper.analysis.summary }}
+                  </p>
+                  <p v-if="paper.analysis.key_implementation_details" style="margin-top: 10px">
+                    <strong>实现细节：</strong>{{ paper.analysis.key_implementation_details }}
+                  </p>
+                  <p v-if="paper.analysis.technical_advantages" style="margin-top: 10px">
+                    <strong>技术优势：</strong>{{ paper.analysis.technical_advantages }}
+                  </p>
+                  <p v-if="paper.analysis.implementation_challenges" style="margin-top: 10px">
+                    <strong>实现难点：</strong>{{ paper.analysis.implementation_challenges }}
+                  </p>
+                </template>
               </div>
               <div v-else>
                 <el-alert :title="paper.error_message || '分析失败'" type="error" />
@@ -381,6 +691,143 @@
         <el-button type="primary" @click="exportPath">导出路径</el-button>
       </template>
     </el-dialog>
+
+    <!-- 历史方案对话框 -->
+    <el-dialog
+      v-model="showHistoryDialog"
+      title="历史实现路径方案"
+      width="80%"
+      :close-on-click-modal="false"
+      class="history-path-dialog"
+    >
+      <div v-if="historyLoading" class="history-loading">
+        <el-skeleton :rows="5" animated />
+      </div>
+      <div v-else-if="historyError" class="history-error">
+        <el-alert :title="historyError" type="error" />
+      </div>
+      <div v-else-if="historyPathList && historyPathList.length > 0" class="history-list">
+        <el-timeline>
+          <el-timeline-item
+            v-for="(item, index) in historyPathList"
+            :key="item.id"
+            :timestamp="formatDateTime(item.created_at)"
+            placement="top"
+            :type="item.status === 'success' ? 'success' : 'danger'"
+          >
+            <el-card>
+              <div class="history-item-header">
+                <h4>方案 #{{ historyPathList.length - index }}</h4>
+                <el-tag :type="item.status === 'success' ? 'success' : 'danger'" size="small">
+                  {{ item.status === 'success' ? '成功' : '失败' }}
+                </el-tag>
+              </div>
+              <div class="history-item-content">
+                <p><strong>使用的论文：</strong>{{ item.paper_ids.join(', ') }}</p>
+                <p v-if="item.timings && item.timings.total_ms">
+                  <strong>总耗时：</strong>{{ (item.timings.total_ms / 1000).toFixed(2) }} 秒
+                </p>
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  @click="viewHistoryPath(item)"
+                  style="margin-top: 10px"
+                >
+                  查看详情
+                </el-button>
+              </div>
+            </el-card>
+          </el-timeline-item>
+        </el-timeline>
+      </div>
+      <div v-else class="history-empty">
+        <el-empty description="该话题下暂无历史方案" />
+      </div>
+      <template #footer>
+        <el-button @click="showHistoryDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 所有历史方案对话框 -->
+    <el-dialog
+      v-model="showAllHistoryDialog"
+      title="所有历史实现路径方案"
+      width="85%"
+      :close-on-click-modal="false"
+      class="all-history-path-dialog"
+    >
+      <div v-if="allHistoryLoading" class="history-loading">
+        <el-skeleton :rows="5" animated />
+      </div>
+      <div v-else-if="allHistoryError" class="history-error">
+        <el-alert :title="allHistoryError" type="error" />
+      </div>
+      <div v-else-if="allHistoryPathList && allHistoryPathList.length > 0" class="all-history-list">
+        <el-pagination
+          v-model:current-page="allHistoryPage"
+          v-model:page-size="allHistoryPageSize"
+          :total="allHistoryTotal"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="loadAllImplementationPathHistory"
+          @current-change="loadAllImplementationPathHistory"
+          style="margin-bottom: 20px"
+        />
+        <el-timeline>
+          <el-timeline-item
+            v-for="(item, index) in allHistoryPathList"
+            :key="item.id"
+            :timestamp="formatDateTime(item.created_at)"
+            placement="top"
+            :type="item.status === 'success' ? 'success' : 'danger'"
+          >
+            <el-card>
+              <div class="history-item-header">
+                <div>
+                  <h4>方案 #{{ allHistoryTotal - (allHistoryPage - 1) * allHistoryPageSize - index }}</h4>
+                  <p v-if="item.topic_description" style="margin: 5px 0; color: #909399; font-size: 13px;">
+                    话题：{{ item.topic_description }}
+                  </p>
+                </div>
+                <el-tag :type="item.status === 'success' ? 'success' : 'danger'" size="small">
+                  {{ item.status === 'success' ? '成功' : '失败' }}
+                </el-tag>
+              </div>
+              <div class="history-item-content">
+                <p><strong>使用的论文：</strong>{{ item.paper_ids.join(', ') }}</p>
+                <p v-if="item.timings && item.timings.total_ms">
+                  <strong>总耗时：</strong>{{ (item.timings.total_ms / 1000).toFixed(2) }} 秒
+                </p>
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  @click="viewHistoryPath(item)"
+                  style="margin-top: 10px"
+                >
+                  查看详情
+                </el-button>
+              </div>
+            </el-card>
+          </el-timeline-item>
+        </el-timeline>
+        <el-pagination
+          v-model:current-page="allHistoryPage"
+          v-model:page-size="allHistoryPageSize"
+          :total="allHistoryTotal"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="loadAllImplementationPathHistory"
+          @current-change="loadAllImplementationPathHistory"
+          style="margin-top: 20px"
+        />
+      </div>
+      <div v-else class="history-empty">
+        <el-empty description="暂无历史方案" />
+      </div>
+      <template #footer>
+        <el-button @click="showAllHistoryDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -389,7 +836,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import { Search, FolderOpened, OfficeBuilding, User, Document, Opportunity, Calendar } from '@element-plus/icons-vue'
+import { Search, FolderOpened, OfficeBuilding, User, Document, Opportunity, Calendar, Clock } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
@@ -418,6 +865,21 @@ const pathTimings = ref(null)
 const pathTaskId = ref(null)
 const pathProgress = ref(null)
 let pathProgressTimer = null
+
+// 历史方案相关（当前话题）
+const showHistoryDialog = ref(false)
+const historyLoading = ref(false)
+const historyError = ref(null)
+const historyPathList = ref([])
+
+// 所有历史方案相关
+const showAllHistoryDialog = ref(false)
+const allHistoryLoading = ref(false)
+const allHistoryError = ref(null)
+const allHistoryPathList = ref([])
+const allHistoryPage = ref(1)
+const allHistoryPageSize = ref(20)
+const allHistoryTotal = ref(0)
 
 // 保存匹配状态到 localStorage（只在查看合作方案后保存）
 const saveMatchState = () => {
@@ -739,8 +1201,10 @@ const startMatch = async () => {
     // 后端已经自动保存到数据库，这里显示成功消息
     const historyId = response.data.history_id
     if (historyId) {
+      currentHistoryId.value = historyId  // 保存当前话题的历史ID
       ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项，已保存到匹配历史`)
     } else {
+      currentHistoryId.value = null
       ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项`)
     }
 
@@ -853,6 +1317,11 @@ const generateImplementationPath = async () => {
         try {
           const res = await api.get(`/papers/implementation-progress/${pathTaskId.value}`)
           pathProgress.value = res.data
+          
+          // 如果进度中包含 papers_analysis，更新前端显示（任务进行中也能看到已完成的论文分析）
+          if (res.data.papers_analysis && res.data.papers_analysis.length > 0) {
+            papersAnalysis.value = res.data.papers_analysis
+          }
         } catch (e) {
           console.error('获取实现路径进度失败:', e)
         }
@@ -862,15 +1331,58 @@ const generateImplementationPath = async () => {
     }
 
     const response = await api.post('/papers/generate-implementation-path', requestData)
-    
+
+    // 后端现在可能返回：
+    // - 本地模式: { status: 'processing', task_id, mode: 'local' }
+    // - Redis 模式: { status: 'queued', task_id, mode: 'redis' }
+    // 实际的实现路径结果会在进度接口返回的 state.result 中
+
     if (response.data.status === 'error') {
       pathError.value = response.data.error_message || '生成实现路径失败'
       ElMessage.error(pathError.value)
     } else {
-      implementationPath.value = response.data.implementation_path
-      papersAnalysis.value = response.data.papers_analysis || []
-      pathTimings.value = response.data.timings || null
-      ElMessage.success('实现路径生成成功！')
+      // 等待轮询任务把最终结果写入 pathProgress
+      const waitForResult = async () => {
+        const maxWaitMs = 30 * 60 * 1000 // 最长等待 30 分钟
+        const intervalMs = 1000
+        let waited = 0
+
+        // 如果前面已经拿到一次 progress，这里可能已经有 result
+        while (waited <= maxWaitMs) {
+          const progress = pathProgress.value
+          
+          // 如果进度中有 papers_analysis，先更新显示（任务进行中也能看到已完成的论文分析）
+          if (progress && progress.papers_analysis && progress.papers_analysis.length > 0) {
+            papersAnalysis.value = progress.papers_analysis
+          }
+          
+          // 检查任务是否完成
+          if (progress && progress.result && (progress.status === 'finished' || progress.status === 'error')) {
+            const result = progress.result
+            if (result.status === 'error') {
+              pathError.value = result.error_message || '生成实现路径失败'
+              ElMessage.error(pathError.value)
+            } else {
+              implementationPath.value = result.implementation_path
+              // 优先使用 result 中的 papers_analysis（更完整），否则使用进度中的
+              papersAnalysis.value = result.papers_analysis || progress.papers_analysis || []
+              pathTimings.value = result.timings || null
+              ElMessage.success('实现路径生成成功！')
+            }
+            return
+          }
+          await new Promise((resolve) => setTimeout(resolve, intervalMs))
+          waited += intervalMs
+        }
+
+        // 超时兜底：如果还没有 result，就提示用户稍后重试
+        if (!implementationPath.value) {
+          pathError.value = '生成实现路径超时，请稍后在对话框中重新点击生成或刷新页面后重试'
+          ElMessage.error(pathError.value)
+        }
+      }
+
+      await waitForResult()
     }
   } catch (error) {
     pathError.value = error.response?.data?.detail || error.message || '生成实现路径失败'
@@ -953,6 +1465,88 @@ const getMatchTypeTagType = (matchType) => {
   if (matchType && matchType.includes('B级')) return 'info'
   return ''
 }
+
+// 加载实现路径历史
+const loadImplementationPathHistory = async () => {
+  if (!currentHistoryId.value) {
+    historyError.value = '当前话题没有历史ID'
+    return
+  }
+  
+  historyLoading.value = true
+  historyError.value = null
+  historyPathList.value = []
+  
+  try {
+    const response = await api.get(`/papers/implementation-path-history/${currentHistoryId.value}`)
+    historyPathList.value = response.data.items || []
+  } catch (error) {
+    historyError.value = error.response?.data?.detail || error.message || '加载历史方案失败'
+    ElMessage.error(historyError.value)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+// 查看历史方案详情
+const viewHistoryPath = (historyItem) => {
+  if (historyItem.status !== 'success') {
+    ElMessage.warning('该方案生成失败，无法查看详情')
+    return
+  }
+  
+  // 填充到实现路径对话框
+  implementationPath.value = historyItem.implementation_path
+  papersAnalysis.value = historyItem.papers_analysis || []
+  pathTimings.value = historyItem.timings || null
+  pathError.value = null
+  pathLoading.value = false
+  
+  // 关闭历史对话框，打开实现路径对话框
+  showHistoryDialog.value = false
+  showPathDialog.value = true
+}
+
+// 格式化日期时间
+const formatDateTime = (dateStr) => {
+  if (!dateStr) return ''
+  try {
+    const date = new Date(dateStr)
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  } catch (e) {
+    return dateStr
+  }
+}
+
+// 加载所有实现路径历史
+const loadAllImplementationPathHistory = async () => {
+  allHistoryLoading.value = true
+  allHistoryError.value = null
+  allHistoryPathList.value = []
+  
+  try {
+    const response = await api.get('/papers/implementation-path-history', {
+      params: {
+        page: allHistoryPage.value,
+        page_size: allHistoryPageSize.value
+      }
+    })
+    allHistoryPathList.value = response.data.items || []
+    allHistoryTotal.value = response.data.total || 0
+  } catch (error) {
+    allHistoryError.value = error.response?.data?.detail || error.message || '加载所有历史方案失败'
+    ElMessage.error(allHistoryError.value)
+  } finally {
+    allHistoryLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -972,6 +1566,14 @@ const getMatchTypeTagType = (matchType) => {
   max-width: 900px;
   margin: 0 auto;
   padding: 0 20px;
+}
+
+.hero-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .hero-title {
@@ -1431,6 +2033,90 @@ const getMatchTypeTagType = (matchType) => {
 .path-error {
   padding: 40px;
   text-align: center;
+}
+
+/* 历史方案对话框样式 */
+.history-path-dialog :deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.history-loading,
+.history-error,
+.history-empty {
+  padding: 40px;
+  text-align: center;
+}
+
+.history-list {
+  padding: 20px 0;
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.history-item-header h4 {
+  margin: 0;
+  color: #303133;
+}
+
+.history-item-content {
+  color: #606266;
+  font-size: 14px;
+}
+
+.history-item-content p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+
+/* 论文分析详情样式 */
+.paper-analysis-content {
+  padding: 10px 0;
+}
+
+.analysis-item {
+  margin-top: 20px;
+  padding: 15px;
+  background: #f9fafb;
+  border-radius: 6px;
+  border-left: 3px solid #409eff;
+}
+
+.analysis-item h4 {
+  margin: 0 0 10px 0;
+  color: #303133;
+  font-size: 16px;
+}
+
+.analysis-item p {
+  margin: 5px 0;
+  line-height: 1.6;
+  color: #606266;
+}
+
+.analysis-item ul {
+  margin: 5px 0;
+  padding-left: 20px;
+}
+
+.analysis-item li {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+
+/* 所有历史方案对话框样式 */
+.all-history-path-dialog :deep(.el-dialog__body) {
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+.all-history-list {
+  padding: 20px 0;
 }
 </style>
 

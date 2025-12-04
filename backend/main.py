@@ -27,6 +27,16 @@ else:
 from api.routes import auth, papers, ai, crawler, matching
 from database.database import init_db
 
+# Redis / ARQ 相关（用于可选的分布式任务队列）
+try:
+    from arq import create_pool
+    from arq.connections import RedisSettings
+    import redis.asyncio as aioredis  # type: ignore
+except Exception:  # pragma: no cover - 仅在未安装相关依赖时触发
+    create_pool = None  # type: ignore
+    RedisSettings = None  # type: ignore
+    aioredis = None  # type: ignore
+
 # 创建FastAPI应用实例
 app = FastAPI(
     title="AI论文搜索系统",
@@ -59,8 +69,32 @@ if frontend_path.exists():
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化数据库"""
+    """应用启动时初始化数据库，并尝试探测 Redis / 初始化 ARQ 连接池"""
     init_db()
+
+    # 默认关闭 Redis 模式
+    app.state.use_redis = False
+    app.state.redis_pool = None
+
+    # 若未安装 arq / redis.asyncio，则直接退回本地模式
+    if not (create_pool and RedisSettings and aioredis):
+        print("⚠️ 未安装 arq/redis.asyncio，使用本地实现路径任务模式")
+        return
+
+    try:
+        # 探测本地 Redis 是否可用
+        test_client = aioredis.Redis(host="127.0.0.1", port=6379, socket_timeout=1)
+        await test_client.ping()
+        await test_client.close()
+
+        # 建立 ARQ 连接池
+        app.state.redis_pool = await create_pool(
+            RedisSettings(host="127.0.0.1", port=6379)
+        )
+        app.state.use_redis = True
+        print("✅ 检测到 Redis，已开启基于 ARQ 的实现路径任务队列模式")
+    except Exception as e:
+        print(f"⚠️ Redis 未检测到或连接失败（{e}），回退为本地实现路径任务模式")
 
 @app.get("/")
 async def root():

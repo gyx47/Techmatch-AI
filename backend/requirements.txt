@@ -43,3 +43,7 @@ python-dotenv==1.0.0
 # 评估工具
 # ragas>=0.1.0
 # datasets>=2.14.0
+
+# Redis
+redis>=4.5.4
+arq

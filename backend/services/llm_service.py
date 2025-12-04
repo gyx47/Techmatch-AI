@@ -6,6 +6,7 @@ import os
 import json
 import re
 import random
+import time
 from typing import Dict, List, Optional
 import httpx
 import asyncio
@@ -544,10 +545,14 @@ PDF文本片段（截断后）：
         user_requirement: str,
     ) -> Dict:
         """硬核算法/模型类论文解析"""
+        logger.info(f"_analyze_method_paper 被调用: {paper_title[:50]}...")
         if not self.api_key:
+            logger.warning(f"API key 未配置，返回错误")
             return {"error": "API未配置"}
 
+        logger.info(f"API key 已配置，开始处理 PDF 内容")
         pdf_content_truncated = self._smart_truncate_pdf(pdf_content, max_len=8000)
+        logger.info(f"PDF 内容截断完成，长度: {len(pdf_content_truncated)}")
 
         system_prompt = """
 你是一位世界顶级的AI算法架构师，擅长将学术论文（Paper）进行工程化拆解。
@@ -600,7 +605,11 @@ PDF文本片段（截断后）：
 """.strip()
 
         try:
+            logger.info(f"开始调用 DeepSeek API 进行方法类论文精读: {paper_title[:50]}...")
+            logger.info(f"Prompt 长度 - system: {len(system_prompt)}, user: {len(user_prompt)}")
             async with self.sem:
+                logger.info(f"获取到 semaphore，开始调用 API")
+                t_api_start = time.perf_counter()
                 content = await self._call_deepseek(
                     [
                         {"role": "system", "content": system_prompt},
@@ -609,11 +618,16 @@ PDF文本片段（截断后）：
                     temperature=0.5,
                     max_tokens=2200,
                 )
+                t_api_end = time.perf_counter()
+                api_duration_ms = round((t_api_end - t_api_start) * 1000)
+                logger.info(f"DeepSeek API 调用完成: {paper_title[:50]}..., 耗时: {api_duration_ms} ms")
             cleaned = self._clean_json_string(content)
+            logger.info(f"JSON 清理完成，开始解析")
             data = json.loads(cleaned)
+            logger.info(f"JSON 解析完成，返回结果")
             return data
         except Exception as e:
-            logger.error(f"方法类论文解析失败: {e}")
+            logger.error(f"方法类论文解析失败: {e}", exc_info=True)
             return {"error": f"方法类解析失败: {str(e)}"}
 
     async def _analyze_system_paper(
@@ -1044,30 +1058,60 @@ PDF文本片段（截断后）：
 你是一位大厂（如 Google / 字节跳动）的 Tech Lead。
 你的任务是基于多篇参考论文，为用户设计一份【工业级】的技术落地架构方案（Technical Design Document, TDD）。
 你需要进行技术选型（Trade-off analysis），权衡成本、性能和开发难度，给出一个最可行（MVP）的路径。
-你的核心原则是：**Evidence-Based Engineering（基于证据的工程）**。
-❌ 严禁生成：“我们将使用最先进的模型”、“使用标准的数据清洗流程”这种废话。
-✅ 必须具体：“基于Paper_1的分析，我们将采用其提出的 'Gated-Attention' 机制，而非标准的 Self-Attention，因为Paper_1指出前者在长文本下显存占用降低了40%。”
-如果论文中没有提到具体技术栈，请明确说明“论文未提及，建议使用通用方案”，而不是假装那是论文里的内容。
+
+你的核心原则是：**需求驱动的工程化（Requirement-Driven Engineering）**。
+⚠️ 关键要求：
+1. **需求优先**：每个实施阶段必须明确说明"为什么这个阶段对用户需求很重要"、"该阶段完成后用户能获得什么价值"。
+2. **需求验证**：每个阶段都要有明确的"验收标准"，说明如何验证该阶段是否满足用户需求。
+3. **需求适配**：如果论文的方法与用户需求不完全匹配，必须说明如何调整/适配，而不是盲目复现论文。
+4. **Evidence-Based Engineering**：所有技术选型必须基于论文数据，严禁空话。
+
+❌ 严禁生成：
+- "我们将使用最先进的模型"、"使用标准的数据清洗流程"这种废话
+- 只描述论文方法，不说明如何适配用户需求
+- 实施阶段只写"复现论文"，不写"如何服务于用户需求"
+
+✅ 必须具体：
+- "基于Paper_1的分析，我们将采用其提出的 'Gated-Attention' 机制，而非标准的 Self-Attention，因为Paper_1指出前者在长文本下显存占用降低了40%，这正好解决了用户需求中提到的'处理长文档时显存不足'的问题。"
+- "Phase 1 的目标是验证核心算法在用户场景下的可行性。完成后，用户将能够处理自己的数据格式，并获得初步的效果评估。"
+
+如果论文中没有提到具体技术栈，请明确说明"论文未提及，建议使用通用方案"，而不是假装那是论文里的内容。
 """.strip()
         
         user_prompt = f"""
-### 业务需求
+### 业务需求（核心输入）
 {user_requirement}
+
+**重要**：所有实施阶段都必须围绕这个需求展开，每个阶段都要说明：
+- 该阶段如何服务于用户需求
+- 该阶段完成后，用户能获得什么价值
+- 如何验证该阶段是否满足用户需求
 
 ### 候选技术方案（来自论文分析）
 {papers_summary_text}
 
 ### 架构设计指令
 请按照以下逻辑进行推演：
-1. **核心算法选型 (Root Cause Analysis)**
-   - 必须引用具体论文 ID (如 Paper_1) 的具体参数（如 `model_architecture`, `system_components`）。
-   - 举例：为什么选 Paper_1 的架构而不是 Paper_2？(引用 `pros`/`cons` 或 `performance_metrics` 进行对比)。
 
-2. **MVP 实施细节 (Implementation Specs)**
-   - **数据流**：结合 User Requirement，描述数据如何通过 Paper 中提到的模块。
-   - **关键超参**：直接从分析结果中提取 `key_hyperparameters` (如 LR, Batch Size) 写入文档。
-3. **关键技术栈**：具体到库的版本（如：LangChain v0.1, PyTorch 2.1, ChromaDB）。
-4. **SOP (Standard Operating Procedure)**：给出一份可执行的开发手册。注意，不要写 "Step 1: 复现代码"。要写 "Step 1: 复现 Paper_1 的 `[具体模块名]`，输入维度应调整为 `[具体Input Spec]`"。
+1. **需求分析与技术选型 (Requirement-Driven Selection)**
+   - 首先分析用户需求的核心痛点是什么（如：需要处理长文档、需要实时响应、需要低成本部署等）
+   - 然后基于论文分析，选择最适合解决用户痛点的技术方案
+   - 必须引用具体论文 ID (如 Paper_1) 的具体参数（如 `model_architecture`, `system_components`）
+   - 说明：为什么选 Paper_1 的架构而不是 Paper_2？(引用 `pros`/`cons` 或 `performance_metrics` 进行对比)
+   - **关键**：如果论文的方法与用户需求不完全匹配，必须说明如何调整/适配
+
+2. **MVP 实施细节 (Requirement-Driven Implementation)**
+   - **数据流**：结合用户需求，描述数据如何通过 Paper 中提到的模块。例如："用户输入的是 [用户需求中的具体数据格式]，需要先转换为 Paper_1 要求的格式 [具体格式]"
+   - **关键超参**：直接从分析结果中提取 `key_hyperparameters` (如 LR, Batch Size)，但要根据用户需求调整（如：用户需要快速迭代，则 batch size 可以调小）
+   - **需求适配**：如果论文的方法需要调整才能适配用户需求，必须明确说明调整点
+
+3. **关键技术栈**：具体到库的版本（如：LangChain v0.1, PyTorch 2.1, ChromaDB），选择时要考虑用户需求（如：用户需要低成本，则选择轻量级库）
+
+4. **SOP (Standard Operating Procedure)**：给出一份可执行的开发手册。
+   - 每个阶段都要说明"为什么这个阶段对用户需求很重要"
+   - 每个阶段都要有明确的"验收标准"，说明如何验证该阶段是否满足用户需求
+   - 不要只写 "Step 1: 复现代码"
+   - 要写 "Step 1: 实现 Paper_1 的 `[具体模块名]`，输入维度应调整为 `[具体Input Spec]`，**目的是验证该模块能否处理用户需求中的 [具体场景]**"
 
 ### 输出格式 (严格JSON)
 {{
@@ -1083,14 +1127,23 @@ PDF文本片段（截断后）：
     }},
     "development_roadmap_detailed": [
         {{
-            "phase": "Phase 1: Baseline复现",
-            "checklist": [
-                1."实现 [模块名]，参考 Paper_X 的公式 (3)",
-                2. "设置 Loss Function 为 [具体Loss名称]",
-                3. "调整超参数为 [具体超参数值]"
-                ...
+            "phase": "Phase 1: [阶段名称，要体现与用户需求的关系]",
+            "requirement_alignment": "该阶段如何服务于用户需求 [具体说明，如：验证核心算法能否处理用户的实际数据格式]",
+            "user_value": "该阶段完成后，用户能获得什么价值 [具体说明，如：能够处理自己的数据，并获得初步效果评估]",
+            "goals": [
+                "目标1：高层次目标，结合用户需求和论文方法 [具体说明，如：验证 Paper_1 的嵌入模块能否处理用户的长文档场景]",
+                "目标2：高层次目标，结合用户需求和论文方法 [具体说明，如：建立用户数据格式到论文输入格式的转换流程]"
             ],
-            "definition_of_done": "参考 Paper_X 的 [具体指标] 达到 [具体数值]"
+            "deliverables": [
+                "交付物1：要能直接服务于用户需求 [具体说明，如：能够处理用户实际数据格式的嵌入模块]",
+                "交付物2：要能直接服务于用户需求 [具体说明，如：针对用户场景的初步效果评估报告]"
+            ],
+            "checklist": [
+                "1. 具体执行步骤：实现 [模块名]，参考 Paper_X 的 [具体方法]，**调整点**：[如何适配用户需求，如：输入格式从论文的A格式调整为用户需求的B格式]，**代码示例**：[如果有具体的库调用方式]",
+                "2. 具体执行步骤：设置 [参数名] 为 [具体值]，**原因**：[为什么这个值适合用户需求，如：用户需要快速响应，所以batch size调小]，**验证方法**：[如何验证参数设置正确]",
+                "3. 具体执行步骤：验证 [功能点]，**验证方法**：[如何验证该功能是否满足用户需求，如：使用用户提供的测试数据运行模块，检查输出格式]"
+            ],
+            "definition_of_done": "验收标准：不仅要达到 Paper_X 的 [具体指标] [具体数值]，还要验证 [用户需求相关的指标，如：能否处理用户的实际数据格式，响应时间是否满足用户要求]"
         }}
     ],
     "risk_mitigation": {{
