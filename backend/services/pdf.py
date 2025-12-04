@@ -9,12 +9,14 @@ from typing import Optional, List, Dict
 from pathlib import Path
 import tempfile
 import os
+from concurrent.futures import ProcessPoolExecutor
+import asyncio
 from database.database import (
     get_paper_content_cache,
     increment_paper_content_use_count,
     save_paper_content_cache
 )
-
+process_pool = ProcessPoolExecutor()
 logger = logging.getLogger(__name__)
 
 try:
@@ -28,6 +30,54 @@ except ImportError:
         PDF_LIBRARY = None
         logger.warning("未安装PDF解析库，请安装 PyPDF2 或 pdfplumber")
 
+
+def extract_text_from_pdf(pdf_path: Path, max_pages: int = 100, PDF_LIBRARY: str = "PyPDF2") -> str:
+        """
+        从PDF文件中提取文本内容
+        
+        Args:
+            pdf_path: PDF文件路径
+            max_pages: 最大提取页数（避免处理过长论文）
+            
+        Returns:
+            提取的文本内容
+        """
+
+        try:
+            text_parts = []
+            
+            if PDF_LIBRARY == "PyPDF2":
+                with open(pdf_path, 'rb') as f:
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    total_pages = min(len(pdf_reader.pages), max_pages)
+                    
+                    for page_num in range(total_pages):
+                        page = pdf_reader.pages[page_num]
+                        text = page.extract_text()
+                        if text.strip():
+                            text_parts.append(f"=== 第 {page_num + 1} 页 ===\n{text}\n")
+            
+            elif PDF_LIBRARY == "pdfplumber":
+                with pdfplumber.open(pdf_path) as pdf:
+                    total_pages = min(len(pdf.pages), max_pages)
+                    
+                    for page_num in range(total_pages):
+                        page = pdf.pages[page_num]
+                        text = page.extract_text()
+                        if text:
+                            text_parts.append(f"=== 第 {page_num + 1} 页 ===\n{text}\n")
+            
+            full_text = "\n".join(text_parts)
+            
+            # 清理文本：移除多余空白
+            full_text = "\n".join(line.strip() for line in full_text.split("\n") if line.strip())
+            
+            logger.info(f"成功提取PDF文本，共 {total_pages} 页，约 {len(full_text)} 字符")
+            return full_text
+            
+        except Exception as e:
+            logger.error(f"提取PDF文本失败 {pdf_path}: {e}")
+            raise
 
 class PDFService:
     """PDF解析服务"""
@@ -73,57 +123,9 @@ class PDFService:
             logger.error(f"下载PDF失败 {pdf_url}: {e}")
             return None
     
-    def extract_text_from_pdf(self, pdf_path: Path, max_pages: int = 20) -> str:
-        """
-        从PDF文件中提取文本内容
-        
-        Args:
-            pdf_path: PDF文件路径
-            max_pages: 最大提取页数（避免处理过长论文）
-            
-        Returns:
-            提取的文本内容
-        """
-        if PDF_LIBRARY is None:
-            raise ImportError("请安装PDF解析库: pip install PyPDF2 或 pip install pdfplumber")
-        
-        try:
-            text_parts = []
-            
-            if PDF_LIBRARY == "PyPDF2":
-                with open(pdf_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
-                    total_pages = min(len(pdf_reader.pages), max_pages)
-                    
-                    for page_num in range(total_pages):
-                        page = pdf_reader.pages[page_num]
-                        text = page.extract_text()
-                        if text.strip():
-                            text_parts.append(f"=== 第 {page_num + 1} 页 ===\n{text}\n")
-            
-            elif PDF_LIBRARY == "pdfplumber":
-                with pdfplumber.open(pdf_path) as pdf:
-                    total_pages = min(len(pdf.pages), max_pages)
-                    
-                    for page_num in range(total_pages):
-                        page = pdf.pages[page_num]
-                        text = page.extract_text()
-                        if text:
-                            text_parts.append(f"=== 第 {page_num + 1} 页 ===\n{text}\n")
-            
-            full_text = "\n".join(text_parts)
-            
-            # 清理文本：移除多余空白
-            full_text = "\n".join(line.strip() for line in full_text.split("\n") if line.strip())
-            
-            logger.info(f"成功提取PDF文本，共 {total_pages} 页，约 {len(full_text)} 字符")
-            return full_text
-            
-        except Exception as e:
-            logger.error(f"提取PDF文本失败 {pdf_path}: {e}")
-            raise
     
-    def get_paper_content(self, pdf_url: str, arxiv_id: str, max_pages: int = 20) -> Optional[str]:
+    
+    async def get_paper_content(self, pdf_url: str, arxiv_id: str, max_pages: int = 20) -> Optional[str]:
         """
         获取论文的完整文本内容（下载+解析）
         优先从数据库缓存中读取，如果不存在则下载解析并保存到数据库
@@ -147,12 +149,25 @@ class PDFService:
             
             # 缓存不存在，下载并解析PDF
             logger.info(f"缓存不存在，开始下载解析: {arxiv_id}")
-            pdf_path = self.download_pdf(pdf_url, arxiv_id)
+            pdf_path = await asyncio.to_thread(self.download_pdf, pdf_url, arxiv_id)
             if not pdf_path:
                 return None
             
             # 提取文本
-            text = self.extract_text_from_pdf(pdf_path, max_pages)
+            loop = asyncio.get_running_loop()
+            print(f"[{arxiv_id}] 开始解析 (多进程)...")
+        
+            # 关键点：run_in_executor 第一个参数传 process_pool
+            # 注意：run_in_executor 只支持位置参数，不支持关键字参数
+            # 这里按顺序传入 pdf_path, max_pages, PDF_LIBRARY
+            text = await loop.run_in_executor(
+                process_pool,
+                extract_text_from_pdf,
+                pdf_path,
+                max_pages,
+                PDF_LIBRARY,
+            )
+            # text = self.extract_text_from_pdf(pdf_path, max_pages)
             
             # 保存到数据库缓存
             if text:

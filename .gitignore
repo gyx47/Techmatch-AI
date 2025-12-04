@@ -13,3 +13,6 @@ chroma_db/*
 技术.md
 技术.pdf
 *.db
+.aider*
+.env
+.env

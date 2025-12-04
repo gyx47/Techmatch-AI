@@ -20,7 +20,7 @@ class LLMService:
         # 增加并发限制，防止触发 API 速率限制
         self.sem = asyncio.Semaphore(5) 
         self.client = httpx.AsyncClient(
-            timeout=60.0,
+            timeout=600.0,
             headers={"Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"}
         )
@@ -257,7 +257,7 @@ class LLMService:
 
     async def score_papers_listwise(self, user_requirement: str, papers_batch: List[Dict]) -> List[Dict]:
         """
-        Listwise 评分：一次性把多篇论文发给 LLM，让它在内部对比打分
+        Listwise 评分：一次性把多篇论文摘要发给 LLM，让它在内部对比打分
         这样可以更准确地评估相对质量，速度也更快
         """
         if not self.api_key:
@@ -1112,6 +1112,8 @@ PDF文本片段（截断后）：
    - 每个阶段都要有明确的"验收标准"，说明如何验证该阶段是否满足用户需求
    - 不要只写 "Step 1: 复现代码"
    - 要写 "Step 1: 实现 Paper_1 的 `[具体模块名]`，输入维度应调整为 `[具体Input Spec]`，**目的是验证该模块能否处理用户需求中的 [具体场景]**"
+   - 论文有讲述到的执行步骤请详细结合论文内容进行描述，论文没有讲述到但是对于用户需要的工程落地必要的步骤，请详细结合用户需求给出建议。
+   - 实现步骤上下要有明确逻辑关系，思路要流畅不要出现断层。
 
 ### 输出格式 (严格JSON)
 {{
@@ -1127,9 +1129,8 @@ PDF文本片段（截断后）：
     }},
     "development_roadmap_detailed": [
         {{
-            "phase": "Phase 1: [阶段名称，要体现与用户需求的关系]",
+            "phase": "Phase 1: [阶段名]",
             "requirement_alignment": "该阶段如何服务于用户需求 [具体说明，如：验证核心算法能否处理用户的实际数据格式]",
-            "user_value": "该阶段完成后，用户能获得什么价值 [具体说明，如：能够处理自己的数据，并获得初步效果评估]",
             "goals": [
                 "目标1：高层次目标，结合用户需求和论文方法 [具体说明，如：验证 Paper_1 的嵌入模块能否处理用户的长文档场景]",
                 "目标2：高层次目标，结合用户需求和论文方法 [具体说明，如：建立用户数据格式到论文输入格式的转换流程]"
@@ -1139,10 +1140,13 @@ PDF文本片段（截断后）：
                 "交付物2：要能直接服务于用户需求 [具体说明，如：针对用户场景的初步效果评估报告]"
             ],
             "checklist": [
-                "1. 具体执行步骤：实现 [模块名]，参考 Paper_X 的 [具体方法]，**调整点**：[如何适配用户需求，如：输入格式从论文的A格式调整为用户需求的B格式]，**代码示例**：[如果有具体的库调用方式]",
-                "2. 具体执行步骤：设置 [参数名] 为 [具体值]，**原因**：[为什么这个值适合用户需求，如：用户需要快速响应，所以batch size调小]，**验证方法**：[如何验证参数设置正确]",
-                "3. 具体执行步骤：验证 [功能点]，**验证方法**：[如何验证该功能是否满足用户需求，如：使用用户提供的测试数据运行模块，检查输出格式]"
-            ],
+            
+                "1.具体执行步骤",
+                "2. 具体执行步骤",
+                "3. 具体执行步骤",          
+                "4. 具体执行步骤",
+                "...",
+                ],
             "definition_of_done": "验收标准：不仅要达到 Paper_X 的 [具体指标] [具体数值]，还要验证 [用户需求相关的指标，如：能否处理用户的实际数据格式，响应时间是否满足用户要求]"
         }}
     ],
@@ -1167,17 +1171,57 @@ PDF文本片段（截断后）：
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=0.7,
-                        max_tokens=3000,
+                        max_tokens=4000,  # 增加token限制，避免内容被截断
                     )
 
                 cleaned = self._clean_json_string(content)
-                data = json.loads(cleaned)
+                print(f"清理后的JSON内容（前500字符）: {cleaned}")
+                logger.debug(f"清理后的JSON内容（前500字符）: {cleaned[:500]}")
+                
+                # 尝试解析JSON
+                try:
+                    data = json.loads(cleaned)
+                except json.JSONDecodeError as json_err:
+                    # JSON解析失败，尝试更智能的提取
+                    logger.warning(f"直接JSON解析失败，尝试提取JSON块: {json_err}")
+                    logger.warning(f"原始内容长度: {len(cleaned)}, 前1000字符: {cleaned[:1000]}")
+                    
+                    # 尝试提取第一个完整的JSON对象
+                    json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+                    if json_match:
+                        try:
+                            data = json.loads(json_match.group())
+                            logger.info("成功从文本中提取JSON")
+                        except json.JSONDecodeError:
+                            raise ValueError(f"提取的JSON块仍然无效: {json_err}")
+                    else:
+                        raise ValueError(f"无法从响应中找到有效的JSON结构: {json_err}")
+                
                 logger.info(f"生成实现路径成功（第 {attempt} 次尝试）")
                 return data
 
             except Exception as e:
                 last_error = e
                 logger.error(f"生成实现路径失败（第 {attempt} 次尝试）: {e}")
+                logger.error(f"异常类型: {type(e).__name__}")
+                # 记录更多上下文信息
+                if hasattr(e, 'pos'):
+                    logger.error(f"JSON解析错误位置: {e.pos}")
+                if attempt == max_retries:
+                    # 最后一次尝试失败时，记录完整内容（截断到2000字符）
+                    try:
+                        async with self.sem:
+                            content = await self._call_deepseek(
+                                [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": user_prompt},
+                                ],
+                                temperature=0.7,
+                                max_tokens=4000,
+                            )
+                        logger.error(f"最后一次尝试的原始响应（前2000字符）: {content[:2000]}")
+                    except:
+                        pass
 
                 # 简单退避重试，避免瞬时错误（网络抖动、限流等）
                 if attempt < max_retries:

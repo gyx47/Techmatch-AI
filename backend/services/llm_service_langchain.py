@@ -73,7 +73,7 @@ class LLMServiceLangChain:
             openai_api_key=self.api_key,
             openai_api_base="https://api.deepseek.com/v1",
             max_tokens=500,
-            timeout=60.0,
+            timeout=600.0,
             max_retries=3,  # 自动重试 3 次
         )
         

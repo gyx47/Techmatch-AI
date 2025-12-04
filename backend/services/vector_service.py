@@ -181,7 +181,7 @@ class VectorService:
                 ids=[paper_id],
                 metadatas=[{
                     "title": title,
-                    "abstract": abstract[:500]  # 限制摘要长度
+                    "abstract": abstract[:1500]  # 限制摘要长度
                 }]
             )
             

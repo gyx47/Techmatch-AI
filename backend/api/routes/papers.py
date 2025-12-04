@@ -218,12 +218,13 @@ async def process_paper(
         # 1. 下载 / 解析 PDF（在线程池中）
         # ==============================
         t_pdf_start = time.perf_counter()
-        pdf_content = await asyncio.to_thread(
-            pdf_service.get_paper_content,
-            pdf_url,
-            arxiv_id,
-            max_pages=max_pages_per_paper,
-        )
+        # pdf_content = await asyncio.to_thread(
+        #     pdf_service.get_paper_content,
+        #     pdf_url,
+        #     arxiv_id,
+        #     max_pages=max_pages_per_paper,
+        # )
+        pdf_content = await pdf_service.get_paper_content(pdf_url, arxiv_id, max_pages_per_paper)
         t_pdf_end = time.perf_counter()
         pdf_duration_ms = int((t_pdf_end - t_pdf_start) * 1000)
 
@@ -622,15 +623,30 @@ async def core_generate_implementation_path(
         t_impl_end = time.perf_counter()
         impl_duration_ms = int((t_impl_end - t_impl_start) * 1000)
 
-        implementation_path = normalize_implementation_path(raw_implementation_path)
+        implementation_path = normalize_implementation_path(
+            raw_implementation_path if isinstance(raw_implementation_path, dict) else {}
+        ) if isinstance(raw_implementation_path, dict) else {}
 
         overall_end = time.perf_counter()
         total_ms = int((overall_end - overall_start) * 1000)
 
-        result = {
+        # ===== 根据整体方案结果判断成功/失败 =====
+        status = "success"
+        error_message: Optional[str] = None
+
+        if isinstance(raw_implementation_path, dict) and raw_implementation_path.get("error"):
+            # LLM 服务已经明确返回了错误
+            status = "error"
+            error_message = str(raw_implementation_path.get("error"))
+        elif not implementation_path:
+            # 归一化之后整体实现路径为空，也视为失败
+            status = "error"
+            error_message = "实现路径为空或解析失败"
+
+        result: Dict[str, Any] = {
             "papers_analysis": [p.dict() for p in papers_analysis],
             "implementation_path": implementation_path,
-            "status": "success",
+            "status": status,
             "timings": {
                 "implementation_path_ms": impl_duration_ms,
                 "total_ms": total_ms,
@@ -644,28 +660,37 @@ async def core_generate_implementation_path(
                 ],
             },
         }
+        if error_message:
+            result["error_message"] = error_message
 
-        implementation_progress[task_id]["status"] = "finished"
-        implementation_progress[task_id]["current_step"] = "实现路径生成完成"
-        # 确保进度中包含完整的论文分析结果
+        # 更新进度中的总体状态
+        if status == "success":
+            implementation_progress[task_id]["status"] = "finished"
+            implementation_progress[task_id]["current_step"] = "实现路径生成完成"
+        else:
+            implementation_progress[task_id]["status"] = "error"
+            implementation_progress[task_id]["current_step"] = "实现路径生成失败"
+
+        # 确保进度中包含完整的论文分析结果和最终结果
         implementation_progress[task_id]["papers_analysis"] = [p.dict() for p in papers_analysis]
         implementation_progress[task_id]["result"] = result
 
         if update_progress_callback:
             await update_progress_callback(implementation_progress[task_id])
 
-        # 保存实现路径历史到数据库
-        if result.get("status") == "success" and user_id is not None:
+        # 保存实现路径历史到数据库（无论成功/失败都记录，但区分 status）
+        if user_id is not None:
             try:
                 save_implementation_path_history(
                     user_id=user_id,
                     history_id=history_id,
                     paper_ids=paper_ids,
                     user_requirement=user_requirement,
-                    implementation_path=result["implementation_path"],
+                    implementation_path=result.get("implementation_path", {}),
                     papers_analysis=result["papers_analysis"],
                     timings=result.get("timings"),
-                    status="success",
+                    status=status,
+                    error_message=error_message,
                 )
             except Exception as e:
                 logger.error(f"保存实现路径历史失败: {e}")

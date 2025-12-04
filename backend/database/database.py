@@ -509,11 +509,13 @@ def get_implementation_path_history_by_history_id(
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 只查询当前用户的记录，且 history_id 匹配
+    # 查询当前用户的记录，且 history_id 匹配，同时 JOIN match_history 获取话题信息
     cursor.execute("""
-        SELECT * FROM implementation_path_history
-        WHERE user_id = ? AND history_id = ?
-        ORDER BY created_at DESC
+        SELECT iph.*, mh.search_desc as topic_description
+        FROM implementation_path_history iph
+        LEFT JOIN match_history mh ON iph.history_id = mh.id
+        WHERE iph.user_id = ? AND iph.history_id = ?
+        ORDER BY iph.created_at DESC
     """, (user_id, history_id))
     
     rows = cursor.fetchall()

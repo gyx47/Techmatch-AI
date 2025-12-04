@@ -315,11 +315,20 @@
                   <p style="margin: 5px 0 0 0">{{ phase.user_value }}</p>
                 </div>
 
-                <div v-if="phase.objectives">
-                  <strong>目标：</strong>
-                  <ul>
-                    <li v-for="obj in phase.objectives" :key="obj">{{ obj }}</li>
-                  </ul>
+                <!-- 阶段目标：改为标签样式 -->
+                <div v-if="phase.objectives && phase.objectives.length" class="phase-objectives">
+                  <div class="phase-section-title">🎯 目标</div>
+                  <div class="phase-objectives-tags">
+                    <el-tag
+                      v-for="(obj, idx) in phase.objectives"
+                      :key="obj + idx"
+                      effect="light"
+                      type="info"
+                      class="phase-pill-tag"
+                    >
+                      {{ idx + 1 }}. {{ obj }}
+                    </el-tag>
+                  </div>
                 </div>
                 <div v-if="phase.deliverables" style="margin-top: 10px">
                   <strong>交付物：</strong>
@@ -327,15 +336,19 @@
                     <li v-for="del in phase.deliverables" :key="del">{{ del }}</li>
                   </ul>
                 </div>
-                <div v-if="phase.key_tasks" style="margin-top: 10px">
-                  <strong>关键任务：</strong>
-                  <el-tag 
-                    v-for="task in phase.key_tasks" 
-                    :key="task"
-                    style="margin: 3px"
-                  >
-                    {{ task }}
-                  </el-tag>
+                <!-- 关键任务：改为编号清单样式 -->
+                <div v-if="phase.key_tasks && phase.key_tasks.length" class="phase-key-tasks">
+                  <div class="phase-section-title">🛠 关键任务</div>
+                  <ul class="phase-task-list">
+                    <li
+                      v-for="(task, idx) in phase.key_tasks"
+                      :key="task + idx"
+                      class="phase-task-item"
+                    >
+                      <span class="phase-task-index">{{ idx + 1 }}</span>
+                      <span class="phase-task-text">{{ task }}</span>
+                    </li>
+                  </ul>
                 </div>
                 <div v-if="phase.definition_of_done" style="margin-top: 15px; padding: 10px; background: #fff7e6; border-left: 3px solid #faad14; border-radius: 4px">
                   <strong>✅ 验收标准：</strong>
@@ -717,7 +730,12 @@
           >
             <el-card>
               <div class="history-item-header">
-                <h4>方案 #{{ historyPathList.length - index }}</h4>
+                <div>
+                  <h4>方案 #{{ historyPathList.length - index }}</h4>
+                  <p v-if="item.topic_description" style="margin: 5px 0; color: #909399; font-size: 13px;">
+                    话题：{{ item.topic_description }}
+                  </p>
+                </div>
                 <el-tag :type="item.status === 'success' ? 'success' : 'danger'" size="small">
                   {{ item.status === 'success' ? '成功' : '失败' }}
                 </el-tag>
@@ -1735,6 +1753,72 @@ const loadAllImplementationPathHistory = async () => {
 
 .path-section li {
   margin: 5px 0;
+  line-height: 1.6;
+}
+
+/* 实现路径 - 阶段目标与关键任务样式 */
+.phase-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+}
+
+.phase-objectives {
+  margin-top: 10px;
+}
+
+.phase-objectives-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.phase-pill-tag {
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.phase-key-tasks {
+  margin-top: 12px;
+}
+
+.phase-task-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0 0;
+}
+
+.phase-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  margin-bottom: 6px;
+}
+
+.phase-task-index {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #409eff;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.phase-task-text {
+  font-size: 13px;
+  color: #606266;
   line-height: 1.6;
 }
 
