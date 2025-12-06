@@ -108,9 +108,30 @@
 
       <el-tabs v-model="activeTab" class="resource-tabs">
         <el-tab-pane label="找成果" name="achievements">
-          <div class="card-list">
+          <!-- 搜索框 -->
+          <div class="search-section">
+            <el-input
+              v-model="achievementSearchQuery"
+              placeholder="搜索成果标题、描述..."
+              clearable
+              @clear="handleAchievementSearch"
+              @keyup.enter="handleAchievementSearch"
+              style="max-width: 500px; margin-bottom: 20px;"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+              <template #append>
+                <el-button @click="handleAchievementSearch" :loading="loadingAchievements">
+                  搜索
+                </el-button>
+              </template>
+            </el-input>
+          </div>
+          
+          <div v-loading="loadingAchievements" class="card-list">
             <el-card
-              v-for="item in mockAchievements"
+              v-for="item in paginatedAchievements"
               :key="item.id"
               class="resource-card"
               shadow="hover"
@@ -118,7 +139,7 @@
               <div class="card-content">
                 <div class="card-main">
                   <div class="card-header">
-                    <h3 class="card-title">{{ item.title }}</h3>
+                    <h3 class="card-title">{{ item.display_title }}</h3>
                     <el-tag
                       :type="item.data_source === '用户发布' ? 'primary' : 'info'"
                       size="small"
@@ -126,15 +147,15 @@
                       {{ item.data_source }}
                     </el-tag>
                   </div>
-                  <p class="card-description">{{ item.description }}</p>
+                  <p class="card-description">{{ item.display_description }}</p>
                   <div class="card-meta">
                     <span class="meta-item">
                       <el-icon><FolderOpened /></el-icon>
-                      {{ item.field }}
+                      {{ item.display_field }}
                     </span>
                     <span class="meta-item">
                       <el-icon><Clock /></el-icon>
-                      {{ item.publish_time }}
+                      {{ item.display_time ? item.display_time.split('T')[0] : '' }}
                     </span>
                   </div>
                 </div>
@@ -145,13 +166,46 @@
                 </div>
               </div>
             </el-card>
+            <el-empty v-if="!loadingAchievements && paginatedAchievements.length === 0" description="暂无成果数据" />
+            
+            <!-- 分页组件 -->
+            <div v-if="achievementTotal > 0" class="pagination-container">
+              <el-pagination
+                v-model:current-page="achievementPage"
+                :page-size="achievementPageSize"
+                :total="achievementTotal"
+                layout="total, prev, pager, next, jumper"
+                @current-change="handleAchievementPageChange"
+              />
+            </div>
           </div>
         </el-tab-pane>
 
         <el-tab-pane label="找需求" name="needs">
-          <div class="card-list">
+          <!-- 搜索框 -->
+          <div class="search-section">
+            <el-input
+              v-model="needSearchQuery"
+              placeholder="搜索需求标题、描述..."
+              clearable
+              @clear="handleNeedSearch"
+              @keyup.enter="handleNeedSearch"
+              style="max-width: 500px; margin-bottom: 20px;"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+              <template #append>
+                <el-button @click="handleNeedSearch" :loading="loadingNeeds">
+                  搜索
+                </el-button>
+              </template>
+            </el-input>
+          </div>
+          
+          <div v-loading="loadingNeeds" class="card-list">
             <el-card
-              v-for="item in mockNeeds"
+              v-for="item in paginatedNeeds"
               :key="item.id"
               class="resource-card"
               shadow="hover"
@@ -179,7 +233,7 @@
                     </span>
                     <span class="meta-item">
                       <el-icon><Clock /></el-icon>
-                      {{ item.publish_time }}
+                      {{ item.publish_time ? item.publish_time.split('T')[0] : '' }}
                     </span>
                   </div>
                 </div>
@@ -190,6 +244,18 @@
                 </div>
               </div>
             </el-card>
+            <el-empty v-if="!loadingNeeds && paginatedNeeds.length === 0" description="暂无需求数据" />
+            
+            <!-- 分页组件 -->
+            <div v-if="needTotal > 0" class="pagination-container">
+              <el-pagination
+                v-model:current-page="needPage"
+                :page-size="needPageSize"
+                :total="needTotal"
+                layout="total, prev, pager, next, jumper"
+                @current-change="handleNeedPageChange"
+              />
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -202,51 +268,132 @@
         direction="rtl"
       >
         <div class="drawer-content" v-if="currentItem">
-          <div class="detail-section">
-            <h3 class="detail-title">{{ currentItem.title }}</h3>
-            <div class="detail-tag">
-              <el-tag
-                :type="currentItem.data_source === '用户发布' ? 'primary' : 'info'"
-                size="small"
-              >
-                {{ currentItem.data_source }}
-              </el-tag>
+          <!-- 论文详情 -->
+          <template v-if="drawerType === 'achievement' && currentItem.type === 'paper'">
+            <div class="detail-section">
+              <h3 class="detail-title">{{ currentItem.raw_data.title }}</h3>
+              <div class="detail-tag">
+                <el-tag type="info" size="small">系统采集</el-tag>
+              </div>
             </div>
-          </div>
-
-          <div class="detail-section">
-            <h4 class="section-title">简介</h4>
-            <p class="section-content">{{ currentItem.description }}</p>
-          </div>
-
-          <div class="detail-section" v-if="drawerType === 'achievement'">
-            <h4 class="section-title">技术领域</h4>
-            <p class="section-content">{{ currentItem.field }}</p>
-          </div>
-
-          <div class="detail-section" v-if="drawerType === 'need'">
-            <h4 class="section-title">企业信息</h4>
-            <p class="section-content">
-              <strong>公司名称：</strong>{{ currentItem.company_name }}<br />
-              <strong>所属行业：</strong>{{ currentItem.industry }}
-            </p>
-          </div>
-
-          <div class="detail-section">
-            <h4 class="section-title">发布时间</h4>
-            <p class="section-content">{{ currentItem.publish_time }}</p>
-          </div>
-
-          <!-- 用户发布的数据显示联系人信息 -->
-          <div class="detail-section" v-if="currentItem.data_source === '用户发布'">
-            <el-divider />
-            <h4 class="section-title">联系方式</h4>
-            <div class="contact-info">
-              <p><strong>联系人：</strong>{{ mockContactInfo.contact_name }}</p>
-              <p><strong>联系电话：</strong>{{ mockContactInfo.phone }}</p>
-              <p><strong>联系邮箱：</strong>{{ mockContactInfo.email }}</p>
+            <div class="detail-section">
+              <h4 class="section-title">作者</h4>
+              <p class="section-content">{{ currentItem.raw_data.authors }}</p>
             </div>
-          </div>
+            <div class="detail-section">
+              <h4 class="section-title">摘要</h4>
+              <p class="section-content">{{ currentItem.raw_data.abstract }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">分类</h4>
+              <p class="section-content">{{ currentItem.raw_data.categories }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">发布日期</h4>
+              <p class="section-content">{{ currentItem.raw_data.published_date }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">PDF链接</h4>
+              <p class="section-content">
+                <a :href="currentItem.raw_data.pdf_url" target="_blank" style="color: #409eff;">
+                  {{ currentItem.raw_data.pdf_url }}
+                </a>
+              </p>
+            </div>
+          </template>
+
+          <!-- 成果详情 -->
+          <template v-else-if="drawerType === 'achievement' && currentItem.type === 'achievement'">
+            <div class="detail-section">
+              <h3 class="detail-title">{{ currentItem.raw_data.name }}</h3>
+              <div class="detail-tag">
+                <el-tag type="primary" size="small">用户发布</el-tag>
+              </div>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">成果简介</h4>
+              <p class="section-content">{{ currentItem.raw_data.description }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">技术领域</h4>
+              <p class="section-content">{{ currentItem.raw_data.field }}</p>
+            </div>
+            <div class="detail-section" v-if="currentItem.raw_data.application">
+              <h4 class="section-title">应用场景</h4>
+              <p class="section-content">{{ currentItem.raw_data.application }}</p>
+            </div>
+            <div class="detail-section" v-if="currentItem.raw_data.cooperation_mode && currentItem.raw_data.cooperation_mode.length > 0">
+              <h4 class="section-title">合作方式</h4>
+              <p class="section-content">
+                <el-tag v-for="mode in currentItem.raw_data.cooperation_mode" :key="mode" style="margin-right: 8px;">
+                  {{ mode }}
+                </el-tag>
+              </p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">发布时间</h4>
+              <p class="section-content">{{ currentItem.raw_data.created_at ? currentItem.raw_data.created_at.split('T')[0] : '' }}</p>
+            </div>
+            <div class="detail-section">
+              <el-divider />
+              <h4 class="section-title">联系方式</h4>
+              <div class="contact-info">
+                <p><strong>联系人：</strong>{{ currentItem.raw_data.contact_name }}</p>
+                <p><strong>联系电话：</strong>{{ currentItem.raw_data.contact_phone }}</p>
+                <p v-if="currentItem.raw_data.contact_email"><strong>联系邮箱：</strong>{{ currentItem.raw_data.contact_email }}</p>
+              </div>
+            </div>
+          </template>
+
+          <!-- 需求详情 -->
+          <template v-else-if="drawerType === 'need'">
+            <div class="detail-section">
+              <h3 class="detail-title">{{ currentItem.title }}</h3>
+              <div class="detail-tag">
+                <el-tag type="primary" size="small">用户发布</el-tag>
+              </div>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">需求描述</h4>
+              <p class="section-content">{{ currentItem.description }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">企业信息</h4>
+              <p class="section-content">
+                <strong>公司名称：</strong>{{ currentItem.company_name }}<br />
+                <strong>所属行业：</strong>{{ currentItem.industry }}
+              </p>
+            </div>
+            <div class="detail-section" v-if="currentItem.urgency_level">
+              <h4 class="section-title">紧急程度</h4>
+              <p class="section-content">{{ currentItem.urgency_level }}</p>
+            </div>
+            <div class="detail-section" v-if="currentItem.cooperation_preference && currentItem.cooperation_preference.length > 0">
+              <h4 class="section-title">合作方式偏好</h4>
+              <p class="section-content">
+                <el-tag v-for="pref in currentItem.cooperation_preference" :key="pref" style="margin-right: 8px;">
+                  {{ pref }}
+                </el-tag>
+              </p>
+            </div>
+            <div class="detail-section" v-if="currentItem.budget_range">
+              <h4 class="section-title">预算范围</h4>
+              <p class="section-content">{{ currentItem.budget_range }}</p>
+            </div>
+            <div class="detail-section">
+              <h4 class="section-title">发布时间</h4>
+              <p class="section-content">{{ currentItem.publish_time ? currentItem.publish_time.split('T')[0] : '' }}</p>
+            </div>
+            <div class="detail-section">
+              <el-divider />
+              <h4 class="section-title">联系方式</h4>
+              <div class="contact-info">
+                <p><strong>联系人：</strong>{{ currentItem.contact_name }}</p>
+                <p><strong>联系电话：</strong>{{ currentItem.contact_phone }}</p>
+                <p v-if="currentItem.contact_email"><strong>联系邮箱：</strong>{{ currentItem.contact_email }}</p>
+              </div>
+            </div>
+          </template>
 
         </div>
       </el-drawer>
@@ -307,7 +454,7 @@
 import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Refresh, Close, DocumentAdd, FolderOpened, Clock, OfficeBuilding, Collection } from '@element-plus/icons-vue'
+import { Refresh, Close, DocumentAdd, FolderOpened, Clock, OfficeBuilding, Collection, Search } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
@@ -330,7 +477,218 @@ const drawerTitle = ref('')
 const drawerType = ref('')
 const currentItem = ref(null)
 
-// Mock 成果数据
+// 成果数据（合并论文和发布的成果）
+const achievements = ref([])
+const needs = ref([])
+const loadingAchievements = ref(false)
+const loadingNeeds = ref(false)
+
+// 分页相关
+const achievementPage = ref(1)
+const achievementPageSize = ref(10)
+const achievementTotal = ref(0)
+const paginatedAchievements = ref([])
+
+// 论文和成果的分页数据
+const paperPage = ref(1)
+const paperPageSize = ref(10)
+const paperTotal = ref(0)
+const publishedAchievementPage = ref(1)
+const publishedAchievementPageSize = ref(10)
+const publishedAchievementTotal = ref(0)
+
+const needPage = ref(1)
+const needPageSize = ref(10)
+const needTotal = ref(0)
+const paginatedNeeds = ref([])
+
+// 搜索关键词
+const achievementSearchQuery = ref('')
+const needSearchQuery = ref('')
+
+// 加载成果数据（合并论文和发布的成果）
+const loadAchievements = async () => {
+  loadingAchievements.value = true
+  try {
+    const allAchievements = []
+    
+    // 1. 获取论文数据（系统采集）- 使用分页
+    try {
+      const papersResponse = await api.get('/papers/local-search', {
+        params: { 
+          query: achievementSearchQuery.value || '', 
+          page: paperPage.value, 
+          page_size: paperPageSize.value 
+        }
+      })
+      
+      // 处理分页格式返回
+      if (papersResponse.data && papersResponse.data.items) {
+        paperTotal.value = papersResponse.data.total || 0
+        papersResponse.data.items.forEach(paper => {
+          allAchievements.push({
+            id: `paper_${paper.id || paper.arxiv_id}`,
+            type: 'paper',
+            data_source: '系统采集',
+            display_title: paper.title,
+            display_description: paper.abstract || '',
+            display_field: paper.categories || '',
+            display_time: paper.published_date || paper.created_at,
+            raw_data: paper
+          })
+        })
+      } else if (Array.isArray(papersResponse.data)) {
+        // 向后兼容：如果返回的是数组
+        papersResponse.data.forEach(paper => {
+          allAchievements.push({
+            id: `paper_${paper.id || paper.arxiv_id}`,
+            type: 'paper',
+            data_source: '系统采集',
+            display_title: paper.title,
+            display_description: paper.abstract || '',
+            display_field: paper.categories || '',
+            display_time: paper.published_date || paper.created_at,
+            raw_data: paper
+          })
+        })
+      }
+    } catch (error) {
+      console.error('加载论文数据失败:', error)
+    }
+    
+    // 2. 获取发布的成果 - 使用分页
+    try {
+      const achievementsResponse = await api.get('/publish/achievements', {
+        params: { 
+          page: publishedAchievementPage.value, 
+          page_size: publishedAchievementPageSize.value,
+          keyword: achievementSearchQuery.value || undefined
+        }
+      })
+      if (achievementsResponse.data && achievementsResponse.data.items) {
+        publishedAchievementTotal.value = achievementsResponse.data.total || 0
+        achievementsResponse.data.items.forEach(achievement => {
+          allAchievements.push({
+            id: `achievement_${achievement.id}`,
+            type: 'achievement',
+            data_source: '用户发布',
+            display_title: achievement.name,
+            display_description: achievement.description || '',
+            display_field: achievement.field || '',
+            display_time: achievement.created_at,
+            raw_data: achievement
+          })
+        })
+      }
+    } catch (error) {
+      console.error('加载发布成果失败:', error)
+    }
+    
+    // 3. 按时间排序
+    allAchievements.sort((a, b) => {
+      const timeA = new Date(a.display_time || 0).getTime()
+      const timeB = new Date(b.display_time || 0).getTime()
+      return timeB - timeA
+    })
+    
+    // 4. 计算总数和分页
+    achievementTotal.value = paperTotal.value + publishedAchievementTotal.value
+    paginatedAchievements.value = allAchievements
+  } catch (error) {
+    ElMessage.error('加载成果数据失败: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    loadingAchievements.value = false
+  }
+}
+
+// 成果搜索
+const handleAchievementSearch = () => {
+  achievementPage.value = 1
+  paperPage.value = 1
+  publishedAchievementPage.value = 1
+  loadAchievements()
+}
+
+// 成果分页改变
+const handleAchievementPageChange = async (page) => {
+  achievementPage.value = page
+  
+  // 根据总数比例计算论文和成果应该在第几页
+  // 简单策略：如果论文数量远大于成果，主要显示论文
+  if (paperTotal.value > 0 && publishedAchievementTotal.value > 0) {
+    const totalItems = paperTotal.value + publishedAchievementTotal.value
+    const paperRatio = paperTotal.value / totalItems
+    
+    // 如果论文占比很大（>90%），主要翻论文的页
+    if (paperRatio > 0.9) {
+      paperPage.value = page
+      publishedAchievementPage.value = Math.max(1, Math.floor(page * (publishedAchievementTotal.value / paperTotal.value)))
+    } else {
+      // 否则按比例分配
+      const currentPosition = (page - 1) * achievementPageSize.value
+      const paperPosition = Math.floor(currentPosition * paperRatio)
+      const achievementPosition = Math.floor(currentPosition * (1 - paperRatio))
+      
+      paperPage.value = Math.max(1, Math.floor(paperPosition / paperPageSize.value) + 1)
+      publishedAchievementPage.value = Math.max(1, Math.floor(achievementPosition / publishedAchievementPageSize.value) + 1)
+    }
+  } else if (paperTotal.value > 0) {
+    // 只有论文
+    paperPage.value = page
+  } else if (publishedAchievementTotal.value > 0) {
+    // 只有成果
+    publishedAchievementPage.value = page
+  }
+  
+  // 重新加载数据
+  await loadAchievements()
+  // 滚动到顶部
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+// 需求搜索
+const handleNeedSearch = () => {
+  needPage.value = 1
+  loadNeeds()
+}
+
+// 加载需求数据
+const loadNeeds = async () => {
+  loadingNeeds.value = true
+  try {
+    const response = await api.get('/publish/needs', {
+      params: { 
+        page: needPage.value, 
+        page_size: needPageSize.value,
+        keyword: needSearchQuery.value || undefined
+      }
+    })
+    if (response.data) {
+      needTotal.value = response.data.total || 0
+      if (response.data.items) {
+        paginatedNeeds.value = response.data.items.map(need => ({
+          ...need,
+          data_source: '用户发布',
+          publish_time: need.created_at
+        }))
+      }
+    }
+  } catch (error) {
+    ElMessage.error('加载需求数据失败: ' + (error.response?.data?.detail || error.message))
+  } finally {
+    loadingNeeds.value = false
+  }
+}
+
+// 需求分页改变
+const handleNeedPageChange = (page) => {
+  needPage.value = page
+  loadNeeds()
+  // 滚动到顶部
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+// Mock 成果数据（已废弃，保留用于参考）
 const mockAchievements = ref([
   {
     id: 1,
@@ -451,7 +809,16 @@ const mockContactInfo = {
 const openDrawer = (item, type) => {
   currentItem.value = item
   drawerType.value = type
-  drawerTitle.value = type === 'achievement' ? '成果详情' : '需求详情'
+  if (type === 'achievement') {
+    // 根据数据类型设置标题
+    if (item.type === 'paper') {
+      drawerTitle.value = '论文详情'
+    } else {
+      drawerTitle.value = '成果详情'
+    }
+  } else {
+    drawerTitle.value = '需求详情'
+  }
   drawerVisible.value = true
 }
 
@@ -607,6 +974,10 @@ onMounted(() => {
       activeTab.value = tab
     }
   }
+  
+  // 加载资源大厅数据
+  loadAchievements()
+  loadNeeds()
   
   // 加载统计信息和爬虫状态
   loadVectorStats()
@@ -846,5 +1217,19 @@ onUnmounted(() => {
 
 .contact-info strong {
   color: #1f2937;
+}
+
+.pagination-container {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.search-section {
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 </style>

@@ -98,18 +98,43 @@
                   />
                 </el-form-item>
 
-                <el-form-item label="联系人" prop="contact">
+                <el-form-item label="合作方式">
+                  <el-select
+                    v-model="achievementForm.cooperation_mode"
+                    multiple
+                    placeholder="请选择合作方式（可多选）"
+                    style="width: 100%"
+                    :disabled="submitting"
+                  >
+                    <el-option label="技术转让" value="技术转让" />
+                    <el-option label="联合开发" value="联合开发" />
+                    <el-option label="授权许可" value="授权许可" />
+                    <el-option label="技术咨询" value="技术咨询" />
+                    <el-option label="其他" value="其他" />
+                  </el-select>
+                </el-form-item>
+
+                <el-form-item label="联系人" prop="contact_name">
                   <el-input
-                    v-model="achievementForm.contact"
+                    v-model="achievementForm.contact_name"
                     placeholder="请输入联系人姓名"
                     :disabled="submitting"
                   />
                 </el-form-item>
 
-                <el-form-item label="电话" prop="phone">
+                <el-form-item label="电话" prop="contact_phone">
                   <el-input
-                    v-model="achievementForm.phone"
+                    v-model="achievementForm.contact_phone"
                     placeholder="请输入联系电话"
+                    :disabled="submitting"
+                  />
+                </el-form-item>
+
+                <el-form-item label="联系邮箱">
+                  <el-input
+                    v-model="achievementForm.contact_email"
+                    type="email"
+                    placeholder="请输入联系邮箱（可选）"
                     :disabled="submitting"
                   />
                 </el-form-item>
@@ -175,26 +200,80 @@
                   />
                 </el-form-item>
 
-                <el-form-item label="企业名称" prop="company">
+                <el-form-item label="紧急程度">
+                  <el-select
+                    v-model="needForm.urgency_level"
+                    placeholder="请选择紧急程度"
+                    style="width: 100%"
+                    :disabled="submitting"
+                  >
+                    <el-option label="一般" value="一般" />
+                    <el-option label="较急" value="较急" />
+                    <el-option label="紧急" value="紧急" />
+                  </el-select>
+                </el-form-item>
+
+                <el-form-item label="合作方式偏好">
+                  <el-select
+                    v-model="needForm.cooperation_preference"
+                    multiple
+                    placeholder="请选择合作方式偏好（可多选）"
+                    style="width: 100%"
+                    :disabled="submitting"
+                  >
+                    <el-option label="技术转让" value="技术转让" />
+                    <el-option label="联合开发" value="联合开发" />
+                    <el-option label="授权许可" value="授权许可" />
+                    <el-option label="技术咨询" value="技术咨询" />
+                    <el-option label="其他" value="其他" />
+                  </el-select>
+                </el-form-item>
+
+                <el-form-item label="预算范围">
+                  <el-select
+                    v-model="needForm.budget_range"
+                    placeholder="请选择预算范围"
+                    style="width: 100%"
+                    :disabled="submitting"
+                  >
+                    <el-option label="10万以下" value="10万以下" />
+                    <el-option label="10-50万" value="10-50万" />
+                    <el-option label="50-100万" value="50-100万" />
+                    <el-option label="100-500万" value="100-500万" />
+                    <el-option label="500万以上" value="500万以上" />
+                    <el-option label="面议" value="面议" />
+                  </el-select>
+                </el-form-item>
+
+                <el-form-item label="企业名称" prop="company_name">
                   <el-input
-                    v-model="needForm.company"
+                    v-model="needForm.company_name"
                     placeholder="请输入企业名称"
                     :disabled="submitting"
                   />
                 </el-form-item>
 
-                <el-form-item label="联系人" prop="contact">
+                <el-form-item label="联系人" prop="contact_name">
                   <el-input
-                    v-model="needForm.contact"
+                    v-model="needForm.contact_name"
                     placeholder="请输入联系人姓名"
                     :disabled="submitting"
                   />
                 </el-form-item>
 
-                <el-form-item label="电话" prop="phone">
+                <el-form-item label="电话" prop="contact_phone">
                   <el-input
-                    v-model="needForm.phone"
+                    v-model="needForm.contact_phone"
                     placeholder="请输入联系电话"
+                    :disabled="submitting"
+                  />
+                </el-form-item>
+
+                <el-form-item label="联系邮箱">
+                  <el-input
+                    v-model="needForm.contact_email"
+                    type="email"
+                    placeholder="请输入联系邮箱（可选）"
                     :disabled="submitting"
                   />
                 </el-form-item>
@@ -224,6 +303,7 @@ import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
+import api from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -238,8 +318,10 @@ const achievementForm = reactive({
   field: '',
   description: '',
   application: '',
-  contact: '',
-  phone: ''
+  cooperation_mode: [],
+  contact_name: '',
+  contact_phone: '',
+  contact_email: ''
 })
 
 // 需求发布表单
@@ -247,9 +329,13 @@ const needForm = reactive({
   title: '',
   industry: '',
   description: '',
-  company: '',
-  contact: '',
-  phone: ''
+  urgency_level: '',
+  cooperation_preference: [],
+  budget_range: '',
+  company_name: '',
+  contact_name: '',
+  contact_phone: '',
+  contact_email: ''
 })
 
 // 成果表单验证规则
@@ -261,8 +347,8 @@ const achievementRules = {
     { min: 20, message: '成果简介至少需要20个字符', trigger: 'blur' }
   ],
   application: [{ required: true, message: '请输入应用场景', trigger: 'blur' }],
-  contact: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
-  phone: [
+  contact_name: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
+  contact_phone: [
     { required: true, message: '请输入联系电话', trigger: 'blur' },
     { pattern: /^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$/, message: '请输入正确的电话号码', trigger: 'blur' }
   ]
@@ -276,9 +362,9 @@ const needRules = {
     { required: true, message: '请输入需求详细描述', trigger: 'blur' },
     { min: 20, message: '需求描述至少需要20个字符', trigger: 'blur' }
   ],
-  company: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
-  contact: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
-  phone: [
+  company_name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
+  contact_name: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
+  contact_phone: [
     { required: true, message: '请输入联系电话', trigger: 'blur' },
     { pattern: /^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$/, message: '请输入正确的电话号码', trigger: 'blur' }
   ]
@@ -294,20 +380,7 @@ const submitAchievement = async () => {
     submitting.value = true
 
     try {
-      // 注意：后端目前没有专门的成果发布API
-      // 这里可以保存到本地存储或调用其他API
-      // 暂时使用模拟提交，实际项目中需要添加对应的后端API
-      
-      // 可以保存到 localStorage 作为临时方案
-      const achievements = JSON.parse(localStorage.getItem('achievements') || '[]')
-      achievements.push({
-        ...achievementForm,
-        id: Date.now(),
-        created_at: new Date().toISOString(),
-        type: 'achievement'
-      })
-      localStorage.setItem('achievements', JSON.stringify(achievements))
-
+      const response = await api.post('/publish/achievement', achievementForm)
       ElMessage.success('成果发布成功！')
       
       // 清空表单
@@ -316,14 +389,16 @@ const submitAchievement = async () => {
         field: '',
         description: '',
         application: '',
-        contact: '',
-        phone: ''
+        cooperation_mode: [],
+        contact_name: '',
+        contact_phone: '',
+        contact_email: ''
       })
 
       // 清除表单验证状态
       achievementFormRef.value.clearValidate()
     } catch (error) {
-      ElMessage.error('发布失败: ' + (error.message || '未知错误'))
+      ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
     } finally {
       submitting.value = false
     }
@@ -340,20 +415,7 @@ const submitNeed = async () => {
     submitting.value = true
 
     try {
-      // 注意：后端目前没有专门的需求发布API
-      // 这里可以保存到本地存储或调用其他API
-      // 暂时使用模拟提交，实际项目中需要添加对应的后端API
-      
-      // 可以保存到 localStorage 作为临时方案
-      const needs = JSON.parse(localStorage.getItem('needs') || '[]')
-      needs.push({
-        ...needForm,
-        id: Date.now(),
-        created_at: new Date().toISOString(),
-        type: 'need'
-      })
-      localStorage.setItem('needs', JSON.stringify(needs))
-
+      const response = await api.post('/publish/need', needForm)
       ElMessage.success('需求发布成功！')
       
       // 清空表单
@@ -361,15 +423,19 @@ const submitNeed = async () => {
         title: '',
         industry: '',
         description: '',
-        company: '',
-        contact: '',
-        phone: ''
+        urgency_level: '',
+        cooperation_preference: [],
+        budget_range: '',
+        company_name: '',
+        contact_name: '',
+        contact_phone: '',
+        contact_email: ''
       })
 
       // 清除表单验证状态
       needFormRef.value.clearValidate()
     } catch (error) {
-      ElMessage.error('发布失败: ' + (error.message || '未知错误'))
+      ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
     } finally {
       submitting.value = false
     }

@@ -24,7 +24,7 @@ else:
     print("警告: 未找到 .env 文件，将使用系统环境变量")
 
 # 导入路由
-from api.routes import auth, papers, ai, crawler, matching
+from api.routes import auth, papers, ai, crawler, matching, publish
 from database.database import init_db
 
 # Redis / ARQ 相关（用于可选的分布式任务队列）
@@ -61,6 +61,7 @@ app.include_router(papers.router, prefix="/api/papers", tags=["论文"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 app.include_router(crawler.router, prefix="/api/crawler", tags=["爬虫"])
 app.include_router(matching.router, prefix="/api/matching", tags=["匹配"])
+app.include_router(publish.router, prefix="/api/publish", tags=["发布"])
 
 # 静态文件服务
 frontend_path = Path(__file__).parent.parent / "frontend" / "dist"

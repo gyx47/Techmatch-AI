@@ -3,8 +3,9 @@
 """
 import sqlite3
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 import logging
+import json
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -154,6 +155,48 @@ def init_db():
             )
         """)
         
+        # 创建发布成果表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS published_achievements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                field TEXT NOT NULL,
+                description TEXT NOT NULL,
+                application TEXT,
+                cooperation_mode TEXT,
+                contact_name TEXT NOT NULL,
+                contact_phone TEXT NOT NULL,
+                contact_email TEXT,
+                status VARCHAR(20) DEFAULT 'published',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        
+        # 创建发布需求表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS published_needs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                industry TEXT NOT NULL,
+                description TEXT NOT NULL,
+                urgency_level VARCHAR(50),
+                cooperation_preference TEXT,
+                budget_range TEXT,
+                company_name TEXT NOT NULL,
+                contact_name TEXT NOT NULL,
+                contact_phone TEXT NOT NULL,
+                contact_email TEXT,
+                status VARCHAR(20) DEFAULT 'published',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        
         conn.commit()
         conn.close()
         logger.info("数据库初始化成功")
@@ -252,6 +295,43 @@ def get_papers_by_query(query: str, limit: int = 20) -> list:
     papers = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return papers
+
+def get_papers_by_query_paginated(query: str = "", page: int = 1, page_size: int = 20) -> dict:
+    """根据查询条件搜索论文（分页）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建查询条件
+    if query and query.strip():
+        where_clause = "WHERE title LIKE ? OR abstract LIKE ? OR authors LIKE ?"
+        params = [f"%{query}%", f"%{query}%", f"%{query}%"]
+    else:
+        where_clause = ""
+        params = []
+    
+    # 计算总数
+    count_sql = f"SELECT COUNT(*) as total FROM papers {where_clause}"
+    cursor.execute(count_sql, params)
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    select_sql = f"""
+        SELECT * FROM papers 
+        {where_clause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """
+    cursor.execute(select_sql, params + [page_size, offset])
+    papers = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": papers
+    }
 
 def save_match_history(user_id: Optional[int], search_desc: str, match_mode: str, results: List[dict]) -> int:
     """
@@ -601,3 +681,366 @@ def get_all_implementation_path_history(
         "page_size": page_size,
         "items": results
     }
+
+# =======================
+# 发布成果相关函数
+# =======================
+
+def create_published_achievement(user_id: int, data: dict) -> int:
+    """创建发布的成果"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 处理 JSON 字段
+    cooperation_mode = json.dumps(data.get('cooperation_mode', [])) if data.get('cooperation_mode') else None
+    
+    cursor.execute("""
+        INSERT INTO published_achievements 
+        (user_id, name, field, description, application, cooperation_mode, 
+         contact_name, contact_phone, contact_email, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        data.get('name'),
+        data.get('field'),
+        data.get('description'),
+        data.get('application'),
+        cooperation_mode,
+        data.get('contact_name'),
+        data.get('contact_phone'),
+        data.get('contact_email'),
+        data.get('status', 'published')
+    ))
+    
+    achievement_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info(f"创建发布成果成功，ID: {achievement_id}")
+    return achievement_id
+
+def get_published_achievements(
+    page: int = 1, 
+    page_size: int = 20, 
+    keyword: str = None, 
+    field: str = None
+) -> dict:
+    """获取成果列表（分页、搜索、筛选）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建查询条件
+    conditions = ["status = 'published'"]
+    params = []
+    
+    if keyword:
+        conditions.append("(name LIKE ? OR description LIKE ? OR application LIKE ?)")
+        keyword_pattern = f"%{keyword}%"
+        params.extend([keyword_pattern, keyword_pattern, keyword_pattern])
+    
+    if field:
+        conditions.append("field = ?")
+        params.append(field)
+    
+    where_clause = " AND ".join(conditions)
+    
+    # 计算总数
+    cursor.execute(f"SELECT COUNT(*) as total FROM published_achievements WHERE {where_clause}", params)
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    cursor.execute(f"""
+        SELECT * FROM published_achievements 
+        WHERE {where_clause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """, params + [page_size, offset])
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 解析 JSON 字段
+    items = []
+    for row in rows:
+        item = dict(row)
+        if item.get('cooperation_mode'):
+            try:
+                item['cooperation_mode'] = json.loads(item['cooperation_mode'])
+            except:
+                item['cooperation_mode'] = []
+        items.append(item)
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+def get_published_achievement_by_id(achievement_id: int) -> Optional[dict]:
+    """获取成果详情"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM published_achievements 
+        WHERE id = ? AND status = 'published'
+    """, (achievement_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        item = dict(row)
+        # 解析 JSON 字段
+        if item.get('cooperation_mode'):
+            try:
+                item['cooperation_mode'] = json.loads(item['cooperation_mode'])
+            except:
+                item['cooperation_mode'] = []
+        return item
+    return None
+
+def update_published_achievement(achievement_id: int, user_id: int, data: dict) -> bool:
+    """更新成果（仅发布者）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 检查权限
+    cursor.execute("SELECT user_id FROM published_achievements WHERE id = ?", (achievement_id,))
+    row = cursor.fetchone()
+    if not row or row['user_id'] != user_id:
+        conn.close()
+        return False
+    
+    # 处理 JSON 字段
+    cooperation_mode = json.dumps(data.get('cooperation_mode', [])) if data.get('cooperation_mode') else None
+    
+    cursor.execute("""
+        UPDATE published_achievements 
+        SET name = ?, field = ?, description = ?, application = ?, 
+            cooperation_mode = ?, contact_name = ?, contact_phone = ?, 
+            contact_email = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (
+        data.get('name'),
+        data.get('field'),
+        data.get('description'),
+        data.get('application'),
+        cooperation_mode,
+        data.get('contact_name'),
+        data.get('contact_phone'),
+        data.get('contact_email'),
+        achievement_id,
+        user_id
+    ))
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"更新成果成功，ID: {achievement_id}")
+    return True
+
+def delete_published_achievement(achievement_id: int, user_id: int) -> bool:
+    """删除成果（软删除，仅发布者）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 检查权限
+    cursor.execute("SELECT user_id FROM published_achievements WHERE id = ?", (achievement_id,))
+    row = cursor.fetchone()
+    if not row or row['user_id'] != user_id:
+        conn.close()
+        return False
+    
+    cursor.execute("""
+        UPDATE published_achievements 
+        SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (achievement_id, user_id))
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"删除成果成功，ID: {achievement_id}")
+    return True
+
+# =======================
+# 发布需求相关函数
+# =======================
+
+def create_published_need(user_id: int, data: dict) -> int:
+    """创建发布的需求"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 处理 JSON 字段
+    cooperation_preference = json.dumps(data.get('cooperation_preference', [])) if data.get('cooperation_preference') else None
+    
+    cursor.execute("""
+        INSERT INTO published_needs 
+        (user_id, title, industry, description, urgency_level, cooperation_preference, 
+         budget_range, company_name, contact_name, contact_phone, contact_email, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        data.get('title'),
+        data.get('industry'),
+        data.get('description'),
+        data.get('urgency_level'),
+        cooperation_preference,
+        data.get('budget_range'),
+        data.get('company_name'),
+        data.get('contact_name'),
+        data.get('contact_phone'),
+        data.get('contact_email'),
+        data.get('status', 'published')
+    ))
+    
+    need_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    logger.info(f"创建发布需求成功，ID: {need_id}")
+    return need_id
+
+def get_published_needs(
+    page: int = 1, 
+    page_size: int = 20,
+    keyword: str = None, 
+    industry: str = None
+) -> dict:
+    """获取需求列表（分页、搜索、筛选）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建查询条件
+    conditions = ["status = 'published'"]
+    params = []
+    
+    if keyword:
+        conditions.append("(title LIKE ? OR description LIKE ?)")
+        keyword_pattern = f"%{keyword}%"
+        params.extend([keyword_pattern, keyword_pattern])
+    
+    if industry:
+        conditions.append("industry = ?")
+        params.append(industry)
+    
+    where_clause = " AND ".join(conditions)
+    
+    # 计算总数
+    cursor.execute(f"SELECT COUNT(*) as total FROM published_needs WHERE {where_clause}", params)
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    cursor.execute(f"""
+        SELECT * FROM published_needs 
+        WHERE {where_clause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """, params + [page_size, offset])
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 解析 JSON 字段
+    items = []
+    for row in rows:
+        item = dict(row)
+        if item.get('cooperation_preference'):
+            try:
+                item['cooperation_preference'] = json.loads(item['cooperation_preference'])
+            except:
+                item['cooperation_preference'] = []
+        items.append(item)
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items
+    }
+
+def get_published_need_by_id(need_id: int) -> Optional[dict]:
+    """获取需求详情"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM published_needs 
+        WHERE id = ? AND status = 'published'
+    """, (need_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        item = dict(row)
+        # 解析 JSON 字段
+        if item.get('cooperation_preference'):
+            try:
+                item['cooperation_preference'] = json.loads(item['cooperation_preference'])
+            except:
+                item['cooperation_preference'] = []
+        return item
+    return None
+
+def update_published_need(need_id: int, user_id: int, data: dict) -> bool:
+    """更新需求（仅发布者）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 检查权限
+    cursor.execute("SELECT user_id FROM published_needs WHERE id = ?", (need_id,))
+    row = cursor.fetchone()
+    if not row or row['user_id'] != user_id:
+        conn.close()
+        return False
+    
+    # 处理 JSON 字段
+    cooperation_preference = json.dumps(data.get('cooperation_preference', [])) if data.get('cooperation_preference') else None
+    
+    cursor.execute("""
+        UPDATE published_needs 
+        SET title = ?, industry = ?, description = ?, urgency_level = ?, 
+            cooperation_preference = ?, budget_range = ?, company_name = ?, 
+            contact_name = ?, contact_phone = ?, contact_email = ?, 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (
+        data.get('title'),
+        data.get('industry'),
+        data.get('description'),
+        data.get('urgency_level'),
+        cooperation_preference,
+        data.get('budget_range'),
+        data.get('company_name'),
+        data.get('contact_name'),
+        data.get('contact_phone'),
+        data.get('contact_email'),
+        need_id,
+        user_id
+    ))
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"更新需求成功，ID: {need_id}")
+    return True
+
+def delete_published_need(need_id: int, user_id: int) -> bool:
+    """删除需求（软删除，仅发布者）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 检查权限
+    cursor.execute("SELECT user_id FROM published_needs WHERE id = ?", (need_id,))
+    row = cursor.fetchone()
+    if not row or row['user_id'] != user_id:
+        conn.close()
+        return False
+    
+    cursor.execute("""
+        UPDATE published_needs 
+        SET status = 'deleted', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (need_id, user_id))
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"删除需求成功，ID: {need_id}")
+    return True

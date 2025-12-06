@@ -12,6 +12,7 @@ import time
 from database.database import (
     save_paper,
     get_papers_by_query,
+    get_papers_by_query_paginated,
     get_db_connection,
     get_user_by_username,
     save_implementation_path_history,
@@ -137,16 +138,26 @@ async def search_papers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"搜索处理失败: {str(e)}")
 
-@router.get("/local-search", response_model=List[PaperResponse])
+@router.get("/local-search")
 async def local_search_papers(
-    query: str = Query(..., description="搜索关键词"),
-    limit: int = Query(20, description="结果数量限制"),
+    query: str = Query("", description="搜索关键词（可选）"),
+    limit: Optional[int] = Query(None, description="结果数量限制（向后兼容，如果提供则忽略分页参数）"),
+    page: Optional[int] = Query(None, ge=1, description="页码"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="每页数量"),
     current_user: str = Depends(get_current_user)
 ):
-    """本地数据库搜索论文"""
+    """本地数据库搜索论文（支持分页）"""
     try:
-        papers = get_papers_by_query(query, limit)
-        return papers
+        # 如果提供了 limit 参数（向后兼容），使用 limit，返回数组
+        if limit is not None:
+            papers = get_papers_by_query(query, limit)
+            return papers
+        else:
+            # 使用分页，返回分页格式
+            page_num = page if page is not None else 1
+            page_size_num = page_size if page_size is not None else 20
+            result = get_papers_by_query_paginated(query, page_num, page_size_num)
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"本地搜索失败: {str(e)}")
 
