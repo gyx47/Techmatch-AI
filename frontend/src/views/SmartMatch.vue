@@ -86,16 +86,17 @@
 
         <el-row :gutter="24">
           <el-col :span="8" v-for="item in filteredResults" :key="item.id">
-            <div class="paper-card" :class="{ 'selected': isPaperSelected(item.paper_id) }">
-              <div class="card-checkbox-wrapper">
-                <el-checkbox 
-                  v-model="selectedPaperIds" 
-                  :value="item.paper_id"
-                  @change="handlePaperSelection(item.paper_id, $event)"
-                  class="paper-checkbox"
-                  size="large"
-                />
-              </div>
+            <div class="result-card-wrapper">
+              <div class="paper-card" :class="{ 'selected': isPaperSelected(item.paper_id) }">
+                <div class="card-checkbox-wrapper" v-if="item.type === '论文'">
+                  <el-checkbox 
+                    v-model="selectedPaperIds" 
+                    :value="item.paper_id"
+                    @change="handlePaperSelection(item.paper_id, $event)"
+                    class="paper-checkbox"
+                    size="large"
+                  />
+                </div>
               <div class="card-content">
                 <div class="card-header">
                   <h3 class="paper-title">{{ item.title }}</h3>
@@ -137,7 +138,12 @@
                       <el-icon><FolderOpened /></el-icon>
                       {{ item.field }}
                     </span>
-                    <span class="meta-item" v-if="item.authors">
+                    <!-- 成果显示联系方式，论文显示作者 -->
+                    <span class="meta-item" v-if="item.type === '成果' && item.contact_name">
+                      <el-icon><User /></el-icon>
+                      联系人: {{ item.contact_name }}
+                    </span>
+                    <span class="meta-item" v-else-if="item.type === '论文' && item.authors">
                       <el-icon><User /></el-icon>
                       {{ item.authors.split(',').slice(0, 2).join(',') }}{{ item.authors.split(',').length > 2 ? '等' : '' }}
                     </span>
@@ -150,13 +156,19 @@
                 <div class="card-footer">
                   <el-button type="primary" size="default" @click="viewProposal(item.id)" plain>
                     <el-icon><Document /></el-icon>
-                    查看方案
+                    查看详情
                   </el-button>
-                  <el-button v-if="item.pdf_url" @click="openPdf(item.pdf_url)" link type="primary">
+                  <!-- 只有论文有PDF，成果显示联系方式 -->
+                  <el-button v-if="item.type === '论文' && item.pdf_url" @click="openPdf(item.pdf_url)" link type="primary">
                     <el-icon><Document /></el-icon>
                     查看PDF
                   </el-button>
+                  <el-button v-if="item.type === '成果' && item.contact_phone" @click="copyContact(item)" link type="primary">
+                    <el-icon><User /></el-icon>
+                    复制联系方式
+                  </el-button>
                 </div>
+              </div>
               </div>
             </div>
           </el-col>
@@ -871,7 +883,10 @@ const currentHistoryId = ref(null) // 当前匹配的历史ID
 // 论文选择和实现路径相关
 const selectedPaperIds = ref([])
 const selectedPapers = computed(() => {
-  return matchResults.value.filter(item => selectedPaperIds.value.includes(item.paper_id))
+  // 只返回论文（成果不能生成实现路径）
+  return matchResults.value.filter(item => 
+    item.type === '论文' && selectedPaperIds.value.includes(item.paper_id)
+  )
 })
 const generatingPath = ref(false)
 const showPathDialog = ref(false)
@@ -1171,37 +1186,65 @@ const startMatch = async () => {
   clearMatchState()
 
   try {
-    // 调用后端匹配API（自动保存匹配历史）
-    const response = await api.post('/matching/match', {
+    // 调用统一匹配API（包含论文和成果）
+    const response = await api.post('/matching/match-all', {
       requirement: searchText.value,
       top_k: 50,
       match_mode: matchMode.value,
       save_history: true  // 自动保存匹配历史
     })
 
-    // 将后端返回的论文数据转换为成果格式
-    const papers = response.data.papers || []
-    const convertedResults = papers.map((paper, index) => {
-      // 后端返回的 score 是 0-100 的整数，不需要再乘以100
-      const score = paper.score || paper.similarity_score || 0
-      // 如果 score 是 0-1 之间的小数，转换为 0-100；如果已经是 0-100，直接使用
+    // 后端返回的混合结果（论文和成果）
+    const items = response.data.papers || []
+    const convertedResults = items.map((item, index) => {
+      // 后端返回的 score 是 0-100 的整数
+      const score = item.score || item.similarity_score || 0
       const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
       
-      return {
-        id: paper.paper_id || `paper_${index}`,
-        title: paper.title || '无标题',
-        summary: paper.abstract || paper.desc || '暂无摘要',
-        matchScore: matchScore,
-        type: '成果', // 后端返回的是论文，统一作为成果显示
-        field: paper.categories || '未分类',
-        keywords: paper.categories ? paper.categories.split(',') : [],
-        paper_id: paper.paper_id,
-        pdf_url: paper.pdf_url,
-        authors: paper.authors || '',
-        published_date: paper.published_date || '',
-        reason: paper.reason || '',
-        match_type: paper.match_type || '', // S级-完美适配、A级-技术相关等
-        vector_score: paper.vector_score || 0 // 向量相似度分数
+      // 根据 item_type 区分论文和成果
+      if (item.item_type === 'achievement') {
+        // 成果格式
+        return {
+          id: `achievement_${item.achievement_id}`,
+          achievement_id: item.achievement_id,
+          title: item.name || '无标题',
+          summary: item.description || '暂无描述',
+          application: item.application || '',
+          matchScore: matchScore,
+          type: '成果',
+          field: item.field || '未分类',
+          keywords: [],
+          paper_id: null, // 成果没有 paper_id
+          pdf_url: null, // 成果没有 PDF
+          authors: '', // 成果没有作者
+          published_date: '',
+          reason: item.reason || '',
+          match_type: item.match_type || '',
+          vector_score: item.vector_score || 0,
+          // 成果特有字段
+          contact_name: item.contact_name || '',
+          contact_phone: item.contact_phone || '',
+          contact_email: item.contact_email || '',
+          cooperation_mode: item.cooperation_mode || []
+        }
+      } else {
+        // 论文格式
+        return {
+          id: item.paper_id || `paper_${index}`,
+          title: item.title || '无标题',
+          summary: item.abstract || item.desc || '暂无摘要',
+          matchScore: matchScore,
+          type: '论文',
+          field: item.categories || '未分类',
+          keywords: item.categories ? item.categories.split(',') : [],
+          paper_id: item.paper_id,
+          pdf_url: item.pdf_url,
+          authors: item.authors || '',
+          published_date: item.published_date || '',
+          reason: item.reason || '',
+          match_type: item.match_type || '',
+          vector_score: item.vector_score || 0
+        }
       }
     })
 
@@ -1284,6 +1327,8 @@ const handlePaperSelection = (paperId, checked) => {
     selectedPaperIds.value = selectedPaperIds.value.slice(0, 5)
   }
 }
+
+// selectedPapers 已经只包含论文了（在 computed 中已过滤），所以直接检查长度即可
 
 const clearSelection = () => {
   selectedPaperIds.value = []
@@ -1459,6 +1504,16 @@ const openPdf = (url) => {
   if (url) {
     window.open(url, '_blank')
   }
+}
+
+// 复制联系方式
+const copyContact = (item) => {
+  const contactInfo = `联系人：${item.contact_name || ''}\n电话：${item.contact_phone || ''}\n邮箱：${item.contact_email || ''}`
+  navigator.clipboard.writeText(contactInfo).then(() => {
+    ElMessage.success('联系方式已复制到剪贴板')
+  }).catch(() => {
+    ElMessage.error('复制失败，请手动复制')
+  })
 }
 
 // 格式化日期
@@ -1681,6 +1736,23 @@ const loadAllImplementationPathHistory = async () => {
   min-height: 400px;
 }
 
+/* 结果卡片包装器 - 添加边框和间距 */
+.result-card-wrapper {
+  margin-bottom: 32px;
+  padding: 4px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  transition: all 0.3s;
+  box-shadow: 0 2px 12px rgba(102, 126, 234, 0.25);
+  border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.result-card-wrapper:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
@@ -1689,17 +1761,18 @@ const loadAllImplementationPathHistory = async () => {
 
 /* 这些样式在.results-header中已重新定义 */
 
-.card {
+.paper-card {
   background: #fff;
   border-radius: 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
   padding: 20px;
   display: flex;
   flex-direction: column;
   min-height: 280px;
-  margin-bottom: 20px;
   transition: all 0.3s;
   position: relative;
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .card.selected {
@@ -1707,12 +1780,31 @@ const loadAllImplementationPathHistory = async () => {
   box-shadow: 0 4px 20px rgba(64, 158, 255, 0.2);
 }
 
+.card-checkbox-wrapper {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+}
+
 .paper-checkbox {
-  width: 100%;
+  width: auto;
 }
 
 .paper-checkbox :deep(.el-checkbox__label) {
-  width: 100%;
+  display: none;
+}
+
+.paper-checkbox :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
+  background-color: #409eff;
+  border-color: #409eff;
+}
+
+.paper-checkbox :deep(.el-checkbox__inner) {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #409eff;
+  border-radius: 4px;
 }
 
 .results-header {
@@ -2059,17 +2151,9 @@ const loadAllImplementationPathHistory = async () => {
   box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
 }
 
-.card.selected {
+.paper-card.selected {
   border: 2px solid #409eff;
   box-shadow: 0 4px 20px rgba(64, 158, 255, 0.2);
-}
-
-.paper-checkbox {
-  width: 100%;
-}
-
-.paper-checkbox :deep(.el-checkbox__label) {
-  width: 100%;
 }
 
 /* 实现路径对话框样式 */

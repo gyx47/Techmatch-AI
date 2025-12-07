@@ -1,7 +1,7 @@
 """
 发布成果与需求相关路由
 """
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
 from database.database import (
@@ -18,6 +18,7 @@ from database.database import (
     get_user_by_username,
 )
 from api.routes.auth import get_current_user
+from services.vector_service import get_vector_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -76,12 +77,27 @@ class NeedUpdate(BaseModel):
 # 成果相关接口
 # =======================
 
+def _vectorize_achievement_background(achievement_id: int, name: str, description: str, application: str = None):
+    """后台任务：将成果向量化（不阻塞响应）"""
+    try:
+        vector_service = get_vector_service()
+        vector_service.add_achievement(
+            achievement_id=achievement_id,
+            name=name,
+            description=description,
+            application=application
+        )
+        logger.info(f"成果 {achievement_id} 向量化完成")
+    except Exception as e:
+        logger.error(f"成果 {achievement_id} 向量化失败: {str(e)}")
+
 @router.post("/achievement")
 async def publish_achievement(
     achievement: AchievementCreate,
+    background_tasks: BackgroundTasks,
     current_user: str = Depends(get_current_user)
 ):
-    """发布成果"""
+    """发布成果（发布成功后异步向量化）"""
     try:
         user = get_user_by_username(current_user)
         if not user:
@@ -91,6 +107,16 @@ async def publish_achievement(
             raise HTTPException(status_code=403, detail="只有科研人员可以发布成果")
         
         achievement_id = create_published_achievement(user['id'], achievement.dict())
+        
+        # 异步向量化（不阻塞响应）
+        background_tasks.add_task(
+            _vectorize_achievement_background,
+            achievement_id,
+            achievement.name,
+            achievement.description,
+            achievement.application
+        )
+        
         return {
             "message": "成果发布成功",
             "id": achievement_id
@@ -143,9 +169,10 @@ async def get_achievement_detail(
 async def update_achievement(
     achievement_id: int,
     achievement: AchievementUpdate,
+    background_tasks: BackgroundTasks,
     current_user: str = Depends(get_current_user)
 ):
-    """更新成果（仅发布者）"""
+    """更新成果（仅发布者，更新后重新向量化）"""
     try:
         user = get_user_by_username(current_user)
         if not user:
@@ -160,6 +187,18 @@ async def update_achievement(
         if not success:
             raise HTTPException(status_code=403, detail="无权修改此成果或成果不存在")
         
+        # 更新后重新向量化（异步，不阻塞）
+        # 需要获取更新后的完整数据
+        updated_achievement = get_published_achievement_by_id(achievement_id)
+        if updated_achievement:
+            background_tasks.add_task(
+                _vectorize_achievement_background,
+                achievement_id,
+                updated_achievement.get('name', ''),
+                updated_achievement.get('description', ''),
+                updated_achievement.get('application')
+            )
+        
         return {"message": "成果更新成功"}
     except HTTPException:
         raise
@@ -172,7 +211,7 @@ async def delete_achievement(
     achievement_id: int,
     current_user: str = Depends(get_current_user)
 ):
-    """删除成果（仅发布者）"""
+    """删除成果（仅发布者，同时从向量库删除）"""
     try:
         user = get_user_by_username(current_user)
         if not user:
@@ -181,6 +220,13 @@ async def delete_achievement(
         success = delete_published_achievement(achievement_id, user['id'])
         if not success:
             raise HTTPException(status_code=403, detail="无权删除此成果或成果不存在")
+        
+        # 从向量库删除（同步执行，因为删除操作很快）
+        try:
+            vector_service = get_vector_service()
+            vector_service.delete_achievement(achievement_id)
+        except Exception as e:
+            logger.warning(f"从向量库删除成果 {achievement_id} 失败（可能不存在）: {str(e)}")
         
         return {"message": "成果删除成功"}
     except HTTPException:

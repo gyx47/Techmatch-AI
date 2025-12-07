@@ -192,6 +192,73 @@ class VectorService:
             logger.error(f"添加论文 {paper_id} 到向量数据库失败: {str(e)}")
             raise
     
+    def add_achievement(self, achievement_id: int, name: str, description: str, application: str = None) -> bool:
+        """
+        将发布的成果添加到向量数据库（与论文共用同一个 collection）
+        achievement_id: 成果的数据库ID
+        name: 成果名称
+        description: 成果描述
+        application: 应用场景（可选）
+        返回: True 如果成功添加，False 如果已存在
+        """
+        try:
+            # 使用前缀避免与论文ID冲突
+            vector_id = f"achievement_{achievement_id}"
+            
+            # 先检查是否已存在
+            try:
+                results = self.collection.get(ids=[vector_id])
+                if results and results.get('ids') and len(results['ids']) > 0:
+                    logger.debug(f"成果 {achievement_id} 已存在于向量数据库，跳过")
+                    return False
+            except Exception:
+                pass  # 不存在，继续添加
+            
+            # 组合文本：名称 + 描述 + 应用场景
+            text_parts = [name]
+            if description:
+                text_parts.append(description)
+            if application:
+                text_parts.append(application)
+            text = "\n".join(text_parts)
+            
+            # 生成向量
+            embedding = self.embed_text(text)
+            
+            # 存储到 ChromaDB（与论文共用同一个 collection）
+            self.collection.add(
+                embeddings=[embedding],
+                ids=[vector_id],
+                metadatas=[{
+                    "type": "achievement",
+                    "name": name,
+                    "description": description[:1500] if description else "",
+                    "application": application[:500] if application else ""
+                }]
+            )
+            
+            logger.info(f"成果 {achievement_id} 已添加到向量数据库")
+            return True
+            
+        except Exception as e:
+            logger.error(f"添加成果 {achievement_id} 到向量数据库失败: {str(e)}")
+            raise
+    
+    def delete_achievement(self, achievement_id: int) -> bool:
+        """
+        从向量数据库删除成果
+        achievement_id: 成果的数据库ID
+        返回: True 如果成功删除，False 如果不存在
+        """
+        try:
+            vector_id = f"achievement_{achievement_id}"
+            self.collection.delete(ids=[vector_id])
+            logger.info(f"成果 {achievement_id} 已从向量数据库删除")
+            return True
+        except Exception as e:
+            logger.warning(f"删除成果 {achievement_id} 从向量数据库失败（可能不存在）: {str(e)}")
+            return False
+    
     def search_similar(self, query_text: str, top_k: int = 50) -> List[Tuple[str, float]]:
         """
         搜索相似论文

@@ -7,7 +7,7 @@ from typing import List, Optional
 import threading
 
 from api.routes.auth import get_current_user_optional as get_current_user
-from services.matching_service import match_papers
+from services.matching_service import match_papers, match_all
 from services.vector_service import get_vector_service
 from database.database import get_db_connection, get_user_by_username, save_match_history, get_match_history, get_match_results_by_history_id
 import logging
@@ -85,6 +85,59 @@ async def match_user_requirement(
         
         return {
             "papers": results,
+            "total": len(results),
+            "history_id": history_id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"匹配失败: {str(e)}")
+
+@router.post("/match-all", response_model=MatchingResponse)
+async def match_all_items(
+    request: MatchingRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    统一匹配论文和成果接口：
+    1. 将用户需求转换为查询向量
+    2. 在向量数据库中搜索 Top-K 相似论文和成果
+    3. 使用 DeepSeek LLM 对每项进行评分
+    4. 按分数排序返回（论文和成果混合）
+    5. 可选：保存匹配历史到数据库
+    """
+    try:
+        if not request.requirement or not request.requirement.strip():
+            raise HTTPException(status_code=400, detail="需求文本不能为空")
+        
+        # 调用统一匹配服务
+        results = await match_all(
+            user_requirement=request.requirement,
+            top_k=request.top_k
+        )
+        
+        history_id = None
+        
+        # 如果启用保存历史，保存到数据库
+        if request.save_history and results:
+            try:
+                # 获取用户ID
+                user = get_user_by_username(current_user)
+                user_id = user["id"] if user else None
+                
+                # 保存匹配历史（注意：match_results 表可能需要适配成果格式）
+                history_id = save_match_history(
+                    user_id=user_id,
+                    search_desc=request.requirement,
+                    match_mode=request.match_mode,
+                    results=results
+                )
+                logger.info(f"匹配历史已保存，历史ID: {history_id}")
+            except Exception as e:
+                # 保存历史失败不影响匹配结果返回
+                logger.error(f"保存匹配历史失败: {e}")
+        
+        return {
+            "papers": results,  # 虽然字段名是 papers，但实际包含论文和成果
             "total": len(results),
             "history_id": history_id
         }
