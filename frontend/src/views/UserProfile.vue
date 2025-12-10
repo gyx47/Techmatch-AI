@@ -265,29 +265,67 @@ const handleRematch = async (row) => {
       const score = paper.score || 0
       const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
       
-      return {
-        id: paper.paper_id || `paper_${index}`,
-        title: paper.title || '无标题',
-        summary: paper.abstract || '暂无摘要',
-        matchScore: matchScore,
-        type: '成果',
-        field: paper.categories || '未分类',
-        keywords: paper.categories ? paper.categories.split(',') : [],
-        paper_id: paper.paper_id,
-        pdf_url: paper.pdf_url,
-        authors: paper.authors || '',
-        published_date: paper.published_date || '',
-        reason: paper.reason || '',
-        match_type: paper.match_type || '',
-        vector_score: paper.vector_score || 0
+      // 根据item_type判断是论文还是成果
+      const itemType = paper.item_type || (paper.paper_id && paper.paper_id.startsWith('achievement_') ? 'achievement' : 'paper')
+      
+      if (itemType === 'achievement') {
+        // 成果格式
+        return {
+          id: `achievement_${paper.achievement_id || paper.paper_id?.replace('achievement_', '')}`,
+          achievement_id: paper.achievement_id || parseInt(paper.paper_id?.replace('achievement_', '') || '0'),
+          title: paper.name || paper.title || '无标题',
+          summary: paper.description || paper.abstract || '暂无描述',
+          application: paper.application || '',
+          matchScore: matchScore,
+          type: '成果',
+          field: paper.field || paper.categories || '未分类',
+          keywords: [],
+          paper_id: null, // 成果没有paper_id
+          pdf_url: null, // 成果没有PDF
+          authors: '', // 成果没有作者
+          published_date: '',
+          reason: paper.reason || '',
+          match_type: paper.match_type || '',
+          vector_score: paper.vector_score || 0,
+          // 成果特有字段
+          contact_name: paper.contact_name || '',
+          contact_phone: paper.contact_phone || '',
+          contact_email: paper.contact_email || '',
+          cooperation_mode: paper.cooperation_mode || []
+        }
+      } else {
+        // 论文格式
+        return {
+          id: paper.paper_id || `paper_${index}`,
+          title: paper.title || '无标题',
+          summary: paper.abstract || '暂无摘要',
+          matchScore: matchScore,
+          type: '论文',
+          field: paper.categories || '未分类',
+          keywords: paper.categories ? paper.categories.split(',') : [],
+          paper_id: paper.paper_id,
+          pdf_url: paper.pdf_url,
+          authors: paper.authors || '',
+          published_date: paper.published_date || '',
+          reason: paper.reason || '',
+          match_type: paper.match_type || '',
+          vector_score: paper.vector_score || 0
+        }
       }
     })
+    
+    // 检查转换后的结果是否为空
+    if (convertedResults.length === 0) {
+      ElMessage.warning('匹配结果数据格式错误，无法显示')
+      return
+    }
     
     // 保存到 sessionStorage，供 SmartMatch 页面使用
     sessionStorage.setItem('matchingResults', JSON.stringify({
       papers: convertedResults,
       searchText: response.data.search_desc || row.searchContent,
-      matchMode: response.data.match_mode || row.matchMode || 'enterprise'
+      matchMode: response.data.match_mode || row.matchMode || 'enterprise',
+      historyId: response.data.history_id || row.id  // 保存历史ID
     }))
     
     // 跳转到智能匹配页面

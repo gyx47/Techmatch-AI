@@ -430,21 +430,91 @@ async def get_match_history_results(
             }
         
         # 转换为前端需要的格式
+        # 需要区分论文和成果：通过paper_id格式判断
+        # 如果paper_id以"achievement_"开头，说明是成果，需要查询published_achievements表
         papers = []
+        achievement_ids_to_fetch = []
+        achievement_result_map = {}
+        
         for result in results:
-            papers.append({
-                "paper_id": result["paper_id"],
-                "title": result["title"],
-                "abstract": result["abstract"],
-                "authors": result["authors"],
-                "published_date": result["published_date"],
-                "categories": result["categories"],
-                "pdf_url": result["pdf_url"],
-                "score": result["score"],
-                "reason": result["reason"],
-                "match_type": result["match_type"],
-                "vector_score": result["vector_score"]
-            })
+            paper_id = result.get("paper_id")
+            
+            # 判断是成果还是论文
+            if paper_id and paper_id.startswith("achievement_"):
+                # 这是成果，提取achievement_id
+                try:
+                    achievement_id = int(paper_id.replace("achievement_", ""))
+                    achievement_ids_to_fetch.append(achievement_id)
+                    achievement_result_map[achievement_id] = result
+                except ValueError:
+                    logger.warning(f"无法解析成果ID: {paper_id}")
+                    continue
+            else:
+                # 这是论文
+                papers.append({
+                    "paper_id": paper_id,
+                    "title": result.get("title"),
+                    "abstract": result.get("abstract"),
+                    "authors": result.get("authors"),
+                    "published_date": result.get("published_date"),
+                    "categories": result.get("categories"),
+                    "pdf_url": result.get("pdf_url"),
+                    "score": result.get("score"),
+                    "reason": result.get("reason"),
+                    "match_type": result.get("match_type"),
+                    "vector_score": result.get("vector_score"),
+                    "item_type": "paper"  # 标记为论文
+                })
+        
+        # 如果有成果，需要查询published_achievements表获取完整信息
+        if achievement_ids_to_fetch:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            placeholders = ','.join(['?'] * len(achievement_ids_to_fetch))
+            query = f"SELECT * FROM published_achievements WHERE id IN ({placeholders}) AND status = 'published'"
+            cursor.execute(query, achievement_ids_to_fetch)
+            achievements = cursor.fetchall()
+            conn.close()
+            
+            # 将成果转换为前端格式
+            for achievement in achievements:
+                achievement_id = achievement["id"]
+                result = achievement_result_map.get(achievement_id)
+                if not result:
+                    continue
+                
+                # 解析cooperation_mode JSON字段
+                cooperation_mode = []
+                if achievement.get('cooperation_mode'):
+                    try:
+                        import json
+                        cooperation_mode = json.loads(achievement['cooperation_mode'])
+                    except:
+                        pass
+                
+                papers.append({
+                    "paper_id": f"achievement_{achievement_id}",
+                    "item_type": "achievement",  # 标记为成果
+                    "achievement_id": achievement_id,
+                    "name": achievement.get("name"),
+                    "title": achievement.get("name"),  # 兼容前端，使用title字段
+                    "description": achievement.get("description"),
+                    "abstract": achievement.get("description"),  # 兼容前端，使用abstract字段
+                    "application": achievement.get("application"),
+                    "field": achievement.get("field"),
+                    "categories": achievement.get("field"),  # 兼容前端，使用categories字段
+                    "cooperation_mode": cooperation_mode,
+                    "contact_name": achievement.get("contact_name"),
+                    "contact_phone": achievement.get("contact_phone"),
+                    "contact_email": achievement.get("contact_email"),
+                    "pdf_url": None,  # 成果没有PDF
+                    "authors": "",  # 成果没有作者
+                    "published_date": None,
+                    "score": result.get("score"),
+                    "reason": result.get("reason"),
+                    "match_type": result.get("match_type"),
+                    "vector_score": result.get("vector_score")
+                })
         
         return {
             "history_id": history_id,

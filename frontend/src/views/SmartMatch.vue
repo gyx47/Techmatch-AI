@@ -862,7 +862,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
@@ -1028,8 +1028,122 @@ const restoreFromHistory = (historyId) => {
   return false
 }
 
+// 轮询检查匹配任务是否完成
+let matchTaskPollTimer = null
+
+const checkMatchTaskStatus = async () => {
+  try {
+    const taskStateStr = localStorage.getItem('smartMatchTaskState')
+    if (!taskStateStr) {
+      return false
+    }
+    
+    const taskState = JSON.parse(taskStateStr)
+    
+    // 检查任务是否过期（超过10分钟）
+    if (Date.now() - taskState.timestamp > 10 * 60 * 1000) {
+      localStorage.removeItem('smartMatchTaskState')
+      return false
+    }
+    
+    // 如果任务已完成，直接恢复结果
+    if (taskState.status === 'completed' && taskState.results) {
+      searchText.value = taskState.searchText
+      matchMode.value = taskState.matchMode
+      matchResults.value = taskState.results
+      showResults.value = true
+      currentMatchMode.value = taskState.matchMode
+      if (taskState.historyId) {
+        currentHistoryId.value = taskState.historyId
+      }
+      loading.value = false
+      localStorage.removeItem('smartMatchTaskState')
+      if (matchTaskPollTimer) {
+        clearInterval(matchTaskPollTimer)
+        matchTaskPollTimer = null
+      }
+      ElMessage.success(`匹配完成！找到 ${taskState.results.length} 个匹配项`)
+      // 滚动到结果区域
+      setTimeout(() => {
+        const resultsSection = document.querySelector('.results-section')
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 100)
+      return true
+    }
+    
+    // 如果任务失败，显示错误
+    if (taskState.status === 'failed') {
+      searchText.value = taskState.searchText
+      matchMode.value = taskState.matchMode
+      loading.value = false
+      localStorage.removeItem('smartMatchTaskState')
+      if (matchTaskPollTimer) {
+        clearInterval(matchTaskPollTimer)
+        matchTaskPollTimer = null
+      }
+      ElMessage.error('匹配失败: ' + (taskState.error || '未知错误'))
+      return true
+    }
+    
+    // 如果任务正在进行中，继续轮询（等待startMatch函数更新状态）
+    if (taskState.status === 'matching') {
+      return false
+    }
+    
+    return false
+  } catch (e) {
+    console.error('检查匹配任务状态失败:', e)
+    return false
+  }
+}
+
 // 根据用户角色自动设置默认模式，并处理路由参数
-onMounted(() => {
+onMounted(async () => {
+  // 检查是否有正在进行的匹配任务
+  const taskStateStr = localStorage.getItem('smartMatchTaskState')
+  if (taskStateStr) {
+    try {
+      const taskState = JSON.parse(taskStateStr)
+      
+      // 检查任务是否过期（超过10分钟）
+      if (Date.now() - taskState.timestamp > 10 * 60 * 1000) {
+        localStorage.removeItem('smartMatchTaskState')
+      } else {
+        // 如果任务已完成或失败，直接恢复
+        const hasActiveTask = await checkMatchTaskStatus()
+        if (hasActiveTask) {
+          return
+        }
+        
+        // 如果任务正在进行中，恢复状态并启动轮询
+        if (taskState.status === 'matching') {
+          searchText.value = taskState.searchText
+          matchMode.value = taskState.matchMode
+          loading.value = true
+          showResults.value = false
+          
+          // 启动轮询，每2秒检查一次
+          matchTaskPollTimer = setInterval(async () => {
+            const restored = await checkMatchTaskStatus()
+            if (restored && matchTaskPollTimer) {
+              clearInterval(matchTaskPollTimer)
+              matchTaskPollTimer = null
+            }
+          }, 2000)
+          
+          // 立即检查一次
+          await checkMatchTaskStatus()
+          return
+        }
+      }
+    } catch (e) {
+      console.error('恢复匹配任务状态失败:', e)
+      localStorage.removeItem('smartMatchTaskState')
+    }
+  }
+  
   // 检查是否从合作方案详情返回（有保存的状态）
   const restored = restoreMatchState()
   
@@ -1074,6 +1188,11 @@ onMounted(() => {
             showResults.value = true
             currentMatchMode.value = matchMode.value
             
+            // 如果有历史ID，也需要恢复
+            if (data.historyId) {
+              currentHistoryId.value = data.historyId
+            }
+            
             // 清除 sessionStorage（避免重复使用）
             sessionStorage.removeItem('matchingResults')
             
@@ -1086,13 +1205,16 @@ onMounted(() => {
             }, 100)
           } else {
             showResults.value = false
+            ElMessage.warning('匹配结果数据为空，请重新匹配')
           }
         } else {
           showResults.value = false
+          ElMessage.warning('未找到匹配结果数据，请重新匹配')
         }
       } catch (e) {
         console.error('从匹配历史恢复失败:', e)
         showResults.value = false
+        ElMessage.error('恢复匹配结果失败: ' + e.message)
       }
     } else {
       // 新进入页面时，清除之前的状态（但保留匹配结果数据，以便从合作方案返回时使用）
@@ -1100,6 +1222,14 @@ onMounted(() => {
       currentMatchMode.value = null
       // 不清除 matchResults，因为可能从合作方案页面返回
     }
+  }
+})
+
+// 组件卸载时清理轮询定时器
+onUnmounted(() => {
+  if (matchTaskPollTimer) {
+    clearInterval(matchTaskPollTimer)
+    matchTaskPollTimer = null
   }
 })
 
@@ -1185,6 +1315,16 @@ const startMatch = async () => {
   // 清除之前保存的状态（新匹配时）
   clearMatchState()
 
+  // 保存正在进行的匹配任务状态（用于页面切换后恢复）
+  const matchTaskState = {
+    searchText: searchText.value,
+    matchMode: matchMode.value,
+    loading: true,
+    timestamp: Date.now(),
+    status: 'matching' // matching, completed, failed
+  }
+  localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
+
   try {
     // 调用统一匹配API（包含论文和成果）
     const response = await api.post('/matching/match-all', {
@@ -1263,11 +1403,22 @@ const startMatch = async () => {
     const historyId = response.data.history_id
     if (historyId) {
       currentHistoryId.value = historyId  // 保存当前话题的历史ID
+      // 更新匹配任务状态为已完成
+      matchTaskState.status = 'completed'
+      matchTaskState.historyId = historyId
+      matchTaskState.results = convertedResults
+      localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
       ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项，已保存到匹配历史`)
     } else {
       currentHistoryId.value = null
+      matchTaskState.status = 'completed'
+      matchTaskState.results = convertedResults
+      localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
       ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项`)
     }
+    
+    // 不清除匹配任务状态，让轮询检查能够检测到（如果用户切换了页面）
+    // 状态会在 checkMatchTaskStatus 中检测到 completed 后清除
 
     // 滚动到结果区域
     setTimeout(() => {
@@ -1278,6 +1429,12 @@ const startMatch = async () => {
     }, 100)
   } catch (error) {
     loading.value = false
+    // 更新匹配任务状态为失败
+    matchTaskState.status = 'failed'
+    matchTaskState.error = error.response?.data?.detail || error.message
+    localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
+    // 不清除匹配任务状态，让轮询检查能够检测到（如果用户切换了页面）
+    // 状态会在 checkMatchTaskStatus 中检测到 failed 后清除
     ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
     console.error('匹配失败:', error)
   }
