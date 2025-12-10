@@ -171,21 +171,29 @@ class LLMService:
         策略：业务需求 -> 技术映射（多路径枚举） -> 混合检索词
         """
         prompt = f"""
-        你是一位精通人工智能领域的首席架构师。用户的输入是企业侧的“业务痛点”。
-        请你将其转化为学术界可能用于解决该问题的“具体技术路线”和“专业术语”。
+        你是一位精通人工智能领域的首席架构师。用户的输入是企业侧的"业务痛点"。
+        请你将其转化为学术界可能用于解决该问题的"具体技术路线"和"专业术语"。
 
         用户需求："{user_requirement}"
 
-        请遵循以下步骤思考：
+        **重要：首先判断输入是否有意义**
+        - 如果输入是随机字符组合（如 "asbdkasjbdiubqbuibd"）、重复字符（如 "aaaaa"）或其他无意义的文本，请直接返回 "[INVALID_INPUT]"，不要进行技术术语扩展。
+        - 只有确认输入是有意义的业务需求或技术问题描述时，才进行后续的技术术语扩展。
+
+        如果输入有意义，请遵循以下步骤思考：
         1. 分析痛点：用户到底想要什么？（例如：降本、提速、长文本、多模态）
         2. **枚举技术路径（关键）**：列出 3-5 种能解决该问题的**不同技术流派**。不要只给通用的词（如 "Efficient"），要给具体的方案（如 "Quantization", "Speculative Decoding", "Knowledge Distillation", "Linear Attention", "SNN", "Non-autoregressive" 等）。
         3. 构造增强查询：将这些具体的术语组合成一段文本。
 
         请严格按照以下格式返回（不要包含 Markdown 格式，不要换行，直接返回一段纯文本）：
-        [Keywords]: <技术术语1>, <技术术语2>, <技术术语3>, <技术术语4>, <技术术语5>. [Context]: <一段包含上述技术术语的学术综述风格的描述，涵盖多种可能的技术解决方案>
+        - 如果输入无意义：直接返回 "[INVALID_INPUT]"
+        - 如果输入有意义：[Keywords]: <技术术语1>, <技术术语2>, <技术术语3>, <技术术语4>, <技术术语5>. [Context]: <一段包含上述技术术语的学术综述风格的描述，涵盖多种可能的技术解决方案>
 
-        示例输入："我想让大模型在手机上跑得快一点"
+        示例输入（有意义）："我想让大模型在手机上跑得快一点"
         示例返回：[Keywords]: Model Quantization, Knowledge Distillation, Edge Computing, MobileNets, Sparse Attention. [Context]: Research on deploying Large Language Models on edge devices focuses on reducing memory footprint and latency. Key approaches include post-training quantization (PTQ) to low-bit precision, structured pruning to enforce sparsity, and architectural innovations like linear attention mechanisms or state-space models (SSMs) to reduce computational complexity.
+
+        示例输入（无意义）："asbdkasjbdiubqbuibd"
+        示例返回：[INVALID_INPUT]
         """
         
         try:

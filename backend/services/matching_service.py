@@ -5,12 +5,113 @@ import asyncio
 import logging
 import json
 import time
+import re
+import math
 from typing import List, Dict, Tuple
 from database.database import get_db_connection
 from services.vector_service import get_vector_service
 from services.llm_service import get_llm_service
 
 logger = logging.getLogger(__name__)
+
+# 常见技术词汇列表（用于检测输入是否有意义）
+COMMON_TECH_WORDS = {
+    'ai', 'ml', 'dl', 'nlp', 'cv', 'llm', 'transformer', 'cnn', 'rnn', 'lstm',
+    'gan', 'bert', 'gpt', 'attention', 'neural', 'network', 'deep', 'learning',
+    'machine', 'artificial', 'intelligence', 'algorithm', 'model', 'training',
+    'inference', 'optimization', 'quantization', 'pruning', 'distillation',
+    'detection', 'recognition', 'classification', 'segmentation', 'generation',
+    'computer', 'vision', 'natural', 'language', 'processing', 'speech',
+    'image', 'video', 'audio', 'text', 'data', 'dataset', 'benchmark',
+    'accuracy', 'performance', 'efficiency', 'speed', 'latency', 'memory',
+    'gpu', 'cpu', 'edge', 'mobile', 'cloud', 'distributed', 'parallel',
+    'reinforcement', 'supervised', 'unsupervised', 'semi-supervised',
+    'transfer', 'few-shot', 'zero-shot', 'multimodal', 'fusion'
+}
+
+def validate_user_input(text: str) -> Tuple[bool, str]:
+    """
+    检测用户输入是否有意义（快速规则检测）
+    
+    Returns:
+        (is_valid, reason): (True, "") 如果输入有意义, (False, reason) 如果无意义
+    """
+    if not text or not text.strip():
+        return False, "输入为空"
+    
+    text = text.strip()
+    
+    # 1. 长度检查
+    if len(text) < 5:
+        return False, "输入太短，请输入至少5个字符"
+    
+    # 2. 中文字符检测
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
+    if len(chinese_chars) >= 2:  # 至少包含2个中文字符
+        return True, ""  # 包含中文，认为有意义
+    
+    # 3. 英文单词检测
+    # 提取所有英文单词（连续的字母）
+    english_words = re.findall(r'[a-zA-Z]+', text.lower())
+    if english_words:
+        # 检查是否包含常见技术词汇或常用英文单词
+        meaningful_words = [w for w in english_words if len(w) >= 3]  # 至少3个字母的单词
+        if meaningful_words:
+            # 检查是否包含常见技术词汇
+            has_tech_word = any(word in COMMON_TECH_WORDS for word in meaningful_words)
+            if has_tech_word:
+                return True, ""  # 包含技术词汇，认为有意义
+            
+            # 检查是否有多个不同的单词（多个单词通常更有意义）
+            unique_words = set(meaningful_words)
+            if len(unique_words) >= 2:
+                return True, ""  # 多个不同单词，认为有意义
+    
+    # 4. 字符模式检测
+    # 检测是否只是重复字符（如 "aaaaa"）
+    if len(set(text)) <= 2:  # 只有1-2个不同字符
+        # 检查是否主要是重复
+        char_counts = {}
+        for char in text:
+            char_counts[char] = char_counts.get(char, 0) + 1
+        max_count = max(char_counts.values())
+        if max_count > len(text) * 0.7:  # 某个字符占比超过70%
+            return False, "输入主要是重复字符，请输入有意义的搜索内容"
+    
+    # 5. 信息熵检测
+    # 计算字符分布的熵值
+    char_freq = {}
+    for char in text.lower():
+        char_freq[char] = char_freq.get(char, 0) + 1
+    
+    entropy = 0
+    text_len = len(text)
+    for count in char_freq.values():
+        prob = count / text_len
+        if prob > 0:
+            entropy -= prob * math.log2(prob)
+    
+    # 无意义输入的特征：
+    # - 重复字符：熵值很低（< 2）
+    # - 完全随机：熵值很高（> 5）但无意义（没有单词结构）
+    # 有意义的文本：熵值通常在 2-5 之间，且包含单词结构
+    
+    if entropy < 1.5:  # 熵值太低，可能是重复字符
+        return False, "输入字符分布异常，请输入有意义的搜索内容"
+    
+    # 6. 检查是否只是随机字符组合（没有单词结构）
+    # 如果全是字母但没有形成有意义的单词，可能是随机字符
+    if re.match(r'^[a-zA-Z]+$', text) and len(text) > 10:
+        # 检查是否有常见的字母组合（如 "tion", "ing", "ed" 等）
+        common_patterns = ['tion', 'ing', 'ed', 'er', 'ly', 'al', 'ic', 'ous', 'ive', 'ment', 'ness']
+        has_pattern = any(pattern in text.lower() for pattern in common_patterns)
+        if not has_pattern and entropy > 4.0:  # 高熵值但没有常见模式
+            # 进一步检查：是否所有字符都是不同的（完全随机）
+            if len(set(text.lower())) > len(text) * 0.9:  # 90%以上字符不同
+                return False, "输入似乎是随机字符组合，请输入有意义的搜索内容"
+    
+    # 如果通过所有检测，认为输入有意义
+    return True, ""
 
 async def match_papers(user_requirement: str, top_k: int = 50) -> List[Dict]:
     try:
@@ -19,11 +120,24 @@ async def match_papers(user_requirement: str, top_k: int = 50) -> List[Dict]:
         vector_service = get_vector_service()
 
         # ---------------------------------------------------------
+        # 步骤 0: 输入质量检测（快速规则检测）
+        # ---------------------------------------------------------
+        is_valid, reason = validate_user_input(user_requirement)
+        if not is_valid:
+            logger.warning(f"输入质量检测失败: {reason}, 输入: {user_requirement[:50]}...")
+            return []  # 直接返回空结果，不进行查询扩展和向量搜索
+        
+        # ---------------------------------------------------------
         # 步骤 1: 查询扩展 (Query Expansion) - 提升召回率的关键！
         # ---------------------------------------------------------
         logger.info(f"原始需求: {user_requirement}")
         # 让 LLM 把 "我要做工业质检" 变成 "defect detection, surface anomaly detection, YOLO, CNN..."
         expanded_query = await llm_service.expand_query(user_requirement)
+        
+        # 检查LLM是否判断输入无意义
+        if expanded_query and expanded_query.strip().upper() == "[INVALID_INPUT]":
+            logger.warning(f"LLM判断输入无意义: {user_requirement[:50]}...")
+            return []  # 直接返回空结果
         
         # ---------------------------------------------------------
         # 步骤 2: 向量搜索 (Coarse Ranking)
@@ -188,10 +302,23 @@ async def match_all(user_requirement: str, top_k: int = 50) -> List[Dict]:
         vector_service = get_vector_service()
 
         # ---------------------------------------------------------
-        # 步骤 1: 查询扩展 (Query Expansion)
+        # 步骤 0: 输入质量检测（快速规则检测）
+        # ---------------------------------------------------------
+        is_valid, reason = validate_user_input(user_requirement)
+        if not is_valid:
+            logger.warning(f"输入质量检测失败: {reason}, 输入: {user_requirement[:50]}...")
+            return []  # 直接返回空结果，不进行查询扩展和向量搜索
+        
+        # ---------------------------------------------------------
+        # 步骤 1: 查询扩展 (Query Expansion) - 包含LLM验证
         # ---------------------------------------------------------
         logger.info(f"原始需求: {user_requirement}")
         expanded_query = await llm_service.expand_query(user_requirement)
+        
+        # 检查LLM是否判断输入无意义
+        if expanded_query and expanded_query.strip().upper() == "[INVALID_INPUT]":
+            logger.warning(f"LLM判断输入无意义: {user_requirement[:50]}...")
+            return []  # 直接返回空结果
         
         # ---------------------------------------------------------
         # 步骤 2: 向量搜索 (Coarse Ranking) - 返回论文和成果的混合结果

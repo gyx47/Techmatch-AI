@@ -27,6 +27,8 @@
             placeholder="请输入您的技术难题或成果描述..."
             class="search-textarea"
             :disabled="loading"
+            :maxlength="1000"
+            show-word-limit
           />
 
           <div class="mode-selector">
@@ -1308,6 +1310,27 @@ const startMatch = async () => {
     ElMessage.warning('请输入搜索内容')
     return
   }
+  
+  // 检查输入是否有意义（至少包含一些有意义的字符，避免全是重复字符）
+  const trimmedText = searchText.value.trim()
+  if (trimmedText.length < 5) {
+    ElMessage.warning('请输入至少5个字符的搜索内容')
+    return
+  }
+  
+  // 检查是否全是重复字符（简单检测：如果前10个字符都相同，且整个文本长度超过50，可能是无意义输入）
+  if (trimmedText.length > 50) {
+    const firstChar = trimmedText[0]
+    const firstTenChars = trimmedText.substring(0, Math.min(10, trimmedText.length))
+    if (firstTenChars.split('').every(char => char === firstChar)) {
+      // 检查是否整个文本都是同一个字符
+      const uniqueChars = new Set(trimmedText.split(''))
+      if (uniqueChars.size <= 2) { // 允许最多2个不同字符（比如"aa"或"ab"）
+        ElMessage.warning('请输入有意义的搜索内容，避免使用重复字符')
+        return
+      }
+    }
+  }
 
   loading.value = true
   showResults.value = false
@@ -1392,6 +1415,23 @@ const startMatch = async () => {
     matchResults.value = convertedResults
 
     loading.value = false
+    
+    // 检查是否有匹配结果
+    if (convertedResults.length === 0) {
+      showResults.value = false
+      ElMessage.warning('未找到匹配结果，请尝试使用更具体、有意义的搜索内容')
+      
+      // 更新匹配任务状态为已完成（但结果为空）
+      matchTaskState.status = 'completed'
+      matchTaskState.results = []
+      localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
+      // 清除状态
+      setTimeout(() => {
+        localStorage.removeItem('smartMatchTaskState')
+      }, 1000)
+      return
+    }
+    
     showResults.value = true
     // 记录当前匹配时的模式
     currentMatchMode.value = matchMode.value
@@ -2109,6 +2149,9 @@ const loadAllImplementationPathHistory = async () => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
+  word-break: break-word; /* 允许在单词内换行，处理长文本 */
+  word-wrap: break-word; /* 兼容性：旧版浏览器 */
+  overflow-wrap: break-word; /* 标准属性 */
 }
 
 .card-body {
@@ -2127,6 +2170,9 @@ const loadAllImplementationPathHistory = async () => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
+  word-break: break-word; /* 允许在单词内换行，处理长文本 */
+  word-wrap: break-word; /* 兼容性：旧版浏览器 */
+  overflow-wrap: break-word; /* 标准属性 */
 }
 
 .summary-content :deep(.highlight) {
@@ -2206,6 +2252,9 @@ const loadAllImplementationPathHistory = async () => {
   font-size: 13px;
   color: #475569;
   line-height: 1.7;
+  word-break: break-word; /* 允许在单词内换行，处理长文本 */
+  word-wrap: break-word; /* 兼容性：旧版浏览器 */
+  overflow-wrap: break-word; /* 标准属性 */
 }
 
 /* 分数头部样式 */
