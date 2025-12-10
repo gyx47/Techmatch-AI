@@ -236,6 +236,23 @@ def create_user(username: str, email: str, password_hash: str, role: str = 'rese
     conn.close()
     return user_id
 
+def update_user_password(user_id: int, new_password_hash: str) -> bool:
+    """更新用户密码"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users 
+        SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (new_password_hash, user_id))
+    conn.commit()
+    affected_rows = cursor.rowcount
+    conn.close()
+    if affected_rows > 0:
+        logger.info(f"用户 {user_id} 密码更新成功")
+        return True
+    return False
+
 def save_paper(paper_data: dict) -> Tuple[Optional[int], bool]:
     """
     保存论文信息
@@ -352,6 +369,13 @@ def save_match_history(user_id: Optional[int], search_desc: str, match_mode: str
         
         # 插入匹配结果详情
         for order, result in enumerate(results, 1):
+            # 处理成果和论文的字段差异
+            # 成果使用 name 和 description，论文使用 title 和 abstract
+            # 为了兼容，成果也需要提供 title 和 abstract 字段（从 name 和 description 映射）
+            title = result.get('title') or result.get('name')  # 成果用 name，论文用 title
+            abstract = result.get('abstract') or result.get('description')  # 成果用 description，论文用 abstract
+            categories = result.get('categories') or result.get('field')  # 成果用 field，论文用 categories
+            
             cursor.execute("""
                 INSERT INTO match_results (
                     history_id, paper_id, title, abstract, authors, categories,
@@ -360,10 +384,10 @@ def save_match_history(user_id: Optional[int], search_desc: str, match_mode: str
             """, (
                 history_id,
                 result.get('paper_id'),
-                result.get('title'),
-                result.get('abstract'),
+                title,
+                abstract,
                 result.get('authors'),
-                result.get('categories'),
+                categories,
                 result.get('pdf_url'),
                 result.get('published_date'),
                 result.get('score'),
@@ -722,7 +746,8 @@ def get_published_achievements(
     page: int = 1, 
     page_size: int = 20, 
     keyword: str = None, 
-    field: str = None
+    field: str = None,
+    user_id: int = None
 ) -> dict:
     """获取成果列表（分页、搜索、筛选）"""
     conn = get_db_connection()
@@ -731,6 +756,10 @@ def get_published_achievements(
     # 构建查询条件
     conditions = ["status = 'published'"]
     params = []
+    
+    if user_id:
+        conditions.append("user_id = ?")
+        params.append(user_id)
     
     if keyword:
         conditions.append("(name LIKE ? OR description LIKE ? OR application LIKE ?)")
@@ -903,7 +932,8 @@ def get_published_needs(
     page: int = 1, 
     page_size: int = 20,
     keyword: str = None, 
-    industry: str = None
+    industry: str = None,
+    user_id: int = None
 ) -> dict:
     """获取需求列表（分页、搜索、筛选）"""
     conn = get_db_connection()
@@ -912,6 +942,10 @@ def get_published_needs(
     # 构建查询条件
     conditions = ["status = 'published'"]
     params = []
+    
+    if user_id:
+        conditions.append("user_id = ?")
+        params.append(user_id)
     
     if keyword:
         conditions.append("(title LIKE ? OR description LIKE ?)")

@@ -4,6 +4,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
+import asyncio
 from database.database import (
     create_published_achievement,
     get_published_achievements,
@@ -77,24 +78,41 @@ class NeedUpdate(BaseModel):
 # 成果相关接口
 # =======================
 
-def _vectorize_achievement_background(achievement_id: int, name: str, description: str, application: str = None):
-    """后台任务：将成果向量化（不阻塞响应）"""
+def _vectorize_achievement_sync(achievement_id: int, name: str, description: str, application: str = None, field: str = None):
+    """同步函数：将成果向量化（在线程池中执行）"""
     try:
         vector_service = get_vector_service()
         vector_service.add_achievement(
             achievement_id=achievement_id,
             name=name,
             description=description,
-            application=application
+            application=application,
+            field=field
         )
         logger.info(f"成果 {achievement_id} 向量化完成")
     except Exception as e:
         logger.error(f"成果 {achievement_id} 向量化失败: {str(e)}")
 
+async def _vectorize_achievement_background(achievement_id: int, name: str, description: str, application: str = None, field: str = None):
+    """异步后台任务：将成果向量化（不阻塞响应，立即开始执行）"""
+    try:
+        # 使用 asyncio.to_thread 在线程池中执行同步的向量化操作
+        # 这样可以立即开始执行，不等待响应返回
+        await asyncio.to_thread(
+            _vectorize_achievement_sync,
+            achievement_id,
+            name,
+            description,
+            application,
+            field
+        )
+        logger.info(f"成果 {achievement_id} 向量化任务完成")
+    except Exception as e:
+        logger.error(f"成果 {achievement_id} 向量化任务失败: {str(e)}")
+
 @router.post("/achievement")
 async def publish_achievement(
     achievement: AchievementCreate,
-    background_tasks: BackgroundTasks,
     current_user: str = Depends(get_current_user)
 ):
     """发布成果（发布成功后异步向量化）"""
@@ -108,14 +126,18 @@ async def publish_achievement(
         
         achievement_id = create_published_achievement(user['id'], achievement.dict())
         
-        # 异步向量化（不阻塞响应）
-        background_tasks.add_task(
-            _vectorize_achievement_background,
-            achievement_id,
-            achievement.name,
-            achievement.description,
-            achievement.application
+        # 立即启动异步向量化任务（不等待响应返回，立即开始执行）
+        # 使用 asyncio.create_task 确保任务立即开始执行，而不是等待响应返回
+        asyncio.create_task(
+            _vectorize_achievement_background(
+                achievement_id,
+                achievement.name,
+                achievement.description,
+                achievement.application,
+                achievement.field
+            )
         )
+        logger.info(f"成果 {achievement_id} 向量化任务已启动")
         
         return {
             "message": "成果发布成功",
@@ -148,6 +170,54 @@ async def get_achievements(
         logger.error(f"获取成果列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取成果列表失败: {str(e)}")
 
+@router.get("/my-achievements")
+async def get_my_achievements(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    current_user: str = Depends(get_current_user)
+):
+    """获取当前用户发布的成果列表"""
+    try:
+        user = get_user_by_username(current_user)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        result = get_published_achievements(
+            page=page,
+            page_size=page_size,
+            user_id=user['id']
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取我的成果列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取我的成果列表失败: {str(e)}")
+
+@router.get("/my-needs")
+async def get_my_needs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    current_user: str = Depends(get_current_user)
+):
+    """获取当前用户发布的需求列表"""
+    try:
+        user = get_user_by_username(current_user)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        result = get_published_needs(
+            page=page,
+            page_size=page_size,
+            user_id=user['id']
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取我的需求列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取我的需求列表失败: {str(e)}")
+
 @router.get("/achievement/{achievement_id}")
 async def get_achievement_detail(
     achievement_id: int,
@@ -169,7 +239,6 @@ async def get_achievement_detail(
 async def update_achievement(
     achievement_id: int,
     achievement: AchievementUpdate,
-    background_tasks: BackgroundTasks,
     current_user: str = Depends(get_current_user)
 ):
     """更新成果（仅发布者，更新后重新向量化）"""
@@ -187,17 +256,28 @@ async def update_achievement(
         if not success:
             raise HTTPException(status_code=403, detail="无权修改此成果或成果不存在")
         
-        # 更新后重新向量化（异步，不阻塞）
+        # 更新后重新向量化（异步，不阻塞，立即开始执行）
         # 需要获取更新后的完整数据
         updated_achievement = get_published_achievement_by_id(achievement_id)
         if updated_achievement:
-            background_tasks.add_task(
-                _vectorize_achievement_background,
-                achievement_id,
-                updated_achievement.get('name', ''),
-                updated_achievement.get('description', ''),
-                updated_achievement.get('application')
+            # 先删除旧的向量（如果存在）
+            try:
+                vector_service = get_vector_service()
+                vector_service.delete_achievement(achievement_id)
+            except Exception as e:
+                logger.warning(f"删除旧向量失败（可能不存在）: {str(e)}")
+            
+            # 立即启动异步向量化任务
+            asyncio.create_task(
+                _vectorize_achievement_background(
+                    achievement_id,
+                    updated_achievement.get('name', ''),
+                    updated_achievement.get('description', ''),
+                    updated_achievement.get('application'),
+                    updated_achievement.get('field')
+                )
             )
+            logger.info(f"成果 {achievement_id} 重新向量化任务已启动")
         
         return {"message": "成果更新成功"}
     except HTTPException:

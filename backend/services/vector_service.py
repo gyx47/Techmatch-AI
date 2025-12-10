@@ -192,13 +192,14 @@ class VectorService:
             logger.error(f"添加论文 {paper_id} 到向量数据库失败: {str(e)}")
             raise
     
-    def add_achievement(self, achievement_id: int, name: str, description: str, application: str = None) -> bool:
+    def add_achievement(self, achievement_id: int, name: str, description: str, application: str = None, field: str = None) -> bool:
         """
         将发布的成果添加到向量数据库（与论文共用同一个 collection）
         achievement_id: 成果的数据库ID
         name: 成果名称
         description: 成果描述
         application: 应用场景（可选）
+        field: 技术领域（可选）
         返回: True 如果成功添加，False 如果已存在
         """
         try:
@@ -214,12 +215,14 @@ class VectorService:
             except Exception:
                 pass  # 不存在，继续添加
             
-            # 组合文本：名称 + 描述 + 应用场景
+            # 组合文本：名称 + 描述 + 应用场景 + 技术领域
             text_parts = [name]
             if description:
                 text_parts.append(description)
             if application:
                 text_parts.append(application)
+            if field:
+                text_parts.append(field)  # 包含技术领域
             text = "\n".join(text_parts)
             
             # 生成向量
@@ -233,7 +236,8 @@ class VectorService:
                     "type": "achievement",
                     "name": name,
                     "description": description[:1500] if description else "",
-                    "application": application[:500] if application else ""
+                    "application": application[:500] if application else "",
+                    "field": field if field else ""
                 }]
             )
             

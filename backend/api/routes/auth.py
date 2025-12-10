@@ -9,7 +9,7 @@ import hashlib
 import jwt
 from datetime import datetime, timedelta
 import os
-from database.database import get_user_by_username, get_user_by_email, create_user
+from database.database import get_user_by_username, get_user_by_email, create_user, update_user_password
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)  # 允许可选认证
@@ -130,3 +130,30 @@ async def get_current_user_info(current_user: str = Depends(get_current_user)):
         "role": user.get("role", "researcher"),  # 兼容旧数据，默认返回 researcher
         "created_at": user["created_at"]
     }
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@router.post("/change-password")
+async def change_password(
+    password_data: ChangePasswordRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """修改密码"""
+    user = get_user_by_username(current_user)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 验证当前密码
+    if not verify_password(password_data.old_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="当前密码不正确")
+    
+    # 更新密码
+    new_password_hash = hash_password(password_data.new_password)
+    success = update_user_password(user["id"], new_password_hash)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="密码更新失败")
+    
+    return {"message": "密码修改成功"}

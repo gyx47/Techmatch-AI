@@ -492,21 +492,25 @@ async def get_match_history_results(
                     except:
                         pass
                 
+                # 确保 title 和 abstract 字段不为空（兼容旧数据）
+                achievement_name = achievement.get("name") or ""
+                achievement_description = achievement.get("description") or ""
+                
                 papers.append({
                     "paper_id": f"achievement_{achievement_id}",
                     "item_type": "achievement",  # 标记为成果
                     "achievement_id": achievement_id,
-                    "name": achievement.get("name"),
-                    "title": achievement.get("name"),  # 兼容前端，使用title字段
-                    "description": achievement.get("description"),
-                    "abstract": achievement.get("description"),  # 兼容前端，使用abstract字段
-                    "application": achievement.get("application"),
-                    "field": achievement.get("field"),
-                    "categories": achievement.get("field"),  # 兼容前端，使用categories字段
+                    "name": achievement_name,
+                    "title": achievement_name,  # 兼容前端，使用title字段
+                    "description": achievement_description,
+                    "abstract": achievement_description,  # 兼容前端，使用abstract字段
+                    "application": achievement.get("application") or "",
+                    "field": achievement.get("field") or "",
+                    "categories": achievement.get("field") or "",  # 兼容前端，使用categories字段
                     "cooperation_mode": cooperation_mode,
-                    "contact_name": achievement.get("contact_name"),
-                    "contact_phone": achievement.get("contact_phone"),
-                    "contact_email": achievement.get("contact_email"),
+                    "contact_name": achievement.get("contact_name") or "",
+                    "contact_phone": achievement.get("contact_phone") or "",
+                    "contact_email": achievement.get("contact_email") or "",
                     "pdf_url": None,  # 成果没有PDF
                     "authors": "",  # 成果没有作者
                     "published_date": None,

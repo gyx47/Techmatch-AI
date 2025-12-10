@@ -22,6 +22,9 @@ export const useUserStore = defineStore('user', () => {
       // 获取用户信息
       await getUserInfo()
       
+      // 清除之前的匹配任务状态（新用户登录，不应该看到之前用户的任务状态）
+      localStorage.removeItem('smartMatchTaskState')
+      
       return response.data
     } catch (error) {
       throw new Error(error.response?.data?.detail || '登录失败')
@@ -39,6 +42,9 @@ export const useUserStore = defineStore('user', () => {
       
       // 获取用户信息
       await getUserInfo()
+      
+      // 清除之前的匹配任务状态（新用户注册，不应该看到之前用户的任务状态）
+      localStorage.removeItem('smartMatchTaskState')
       
       return response.data
     } catch (error) {
@@ -65,6 +71,8 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
+    // 清除匹配任务状态（用户退出登录，不应该保留任务状态）
+    localStorage.removeItem('smartMatchTaskState')
   }
 
   return {

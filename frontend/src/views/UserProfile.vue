@@ -36,7 +36,10 @@
               <!-- Tab 1: 我的发布 -->
               <el-tab-pane label="我的发布" name="publishments">
                 <div class="publishments-list">
-                  <el-table :data="myPublishments" style="width: 100%">
+                  <div v-if="loadingPublishments" class="loading-container">
+                    <el-skeleton :rows="5" animated />
+                  </div>
+                  <el-table v-else :data="myPublishments" style="width: 100%" stripe>
                     <el-table-column prop="title" label="标题" min-width="200" />
                     <el-table-column prop="type" label="类型" width="100">
                       <template #default="scope">
@@ -68,6 +71,7 @@
                       </template>
                     </el-table-column>
                   </el-table>
+                  <el-empty v-if="!loadingPublishments && myPublishments.length === 0" description="暂无发布内容" />
                 </div>
               </el-tab-pane>
 
@@ -169,6 +173,176 @@
         </el-col>
       </el-row>
     </div>
+
+    <!-- 编辑对话框 -->
+    <el-dialog
+      v-model="showEditDialog"
+      :title="isEditingAchievement ? '编辑成果' : '编辑需求'"
+      width="800px"
+      :close-on-click-modal="true"
+      :close-on-press-escape="true"
+      @close="closeEditDialog"
+    >
+      <el-form
+        :model="editForm"
+        :rules="editFormRules"
+        ref="editFormRef"
+        label-position="top"
+      >
+        <!-- 成果编辑表单 -->
+        <template v-if="isEditingAchievement">
+          <el-form-item label="成果名称" prop="name">
+            <el-input v-model="editForm.name" placeholder="请输入成果名称" />
+          </el-form-item>
+
+          <el-form-item label="技术领域" prop="field">
+            <el-select v-model="editForm.field" placeholder="请选择技术领域" style="width: 100%">
+              <el-option label="人工智能/机器学习" value="人工智能/机器学习" />
+              <el-option label="计算机视觉" value="计算机视觉" />
+              <el-option label="自然语言处理" value="自然语言处理" />
+              <el-option label="区块链技术" value="区块链技术" />
+              <el-option label="新能源材料" value="新能源材料" />
+              <el-option label="生物医药" value="生物医药" />
+              <el-option label="通信工程" value="通信工程" />
+              <el-option label="大数据/云计算" value="大数据/云计算" />
+              <el-option label="物联网" value="物联网" />
+              <el-option label="其他" value="其他" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="成果简介" prop="description">
+            <el-input
+              v-model="editForm.description"
+              type="textarea"
+              :rows="6"
+              placeholder="请详细描述您的科研成果..."
+            />
+          </el-form-item>
+
+          <el-form-item label="应用场景" prop="application">
+            <el-input
+              v-model="editForm.application"
+              type="textarea"
+              :rows="3"
+              placeholder="请描述该成果的应用场景..."
+            />
+          </el-form-item>
+
+          <el-form-item label="合作方式">
+            <el-select
+              v-model="editForm.cooperation_mode"
+              multiple
+              placeholder="请选择合作方式（可多选）"
+              style="width: 100%"
+            >
+              <el-option label="技术转让" value="技术转让" />
+              <el-option label="联合开发" value="联合开发" />
+              <el-option label="授权许可" value="授权许可" />
+              <el-option label="技术咨询" value="技术咨询" />
+              <el-option label="其他" value="其他" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="联系人" prop="contact_name">
+            <el-input v-model="editForm.contact_name" placeholder="请输入联系人姓名" />
+          </el-form-item>
+
+          <el-form-item label="电话" prop="contact_phone">
+            <el-input v-model="editForm.contact_phone" placeholder="请输入联系电话" />
+          </el-form-item>
+
+          <el-form-item label="联系邮箱">
+            <el-input v-model="editForm.contact_email" type="email" placeholder="请输入联系邮箱（可选）" />
+          </el-form-item>
+        </template>
+
+        <!-- 需求编辑表单 -->
+        <template v-else>
+          <el-form-item label="需求标题" prop="title">
+            <el-input v-model="editForm.title" placeholder="请输入需求标题" />
+          </el-form-item>
+
+          <el-form-item label="行业领域" prop="industry">
+            <el-select v-model="editForm.industry" placeholder="请选择行业领域" style="width: 100%">
+              <el-option label="互联网/电商" value="互联网/电商" />
+              <el-option label="制造业" value="制造业" />
+              <el-option label="金融科技" value="金融科技" />
+              <el-option label="医疗健康" value="医疗健康" />
+              <el-option label="新能源汽车" value="新能源汽车" />
+              <el-option label="智慧农业" value="智慧农业" />
+              <el-option label="教育科技" value="教育科技" />
+              <el-option label="能源环保" value="能源环保" />
+              <el-option label="物流运输" value="物流运输" />
+              <el-option label="其他" value="其他" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="需求详细描述" prop="description">
+            <el-input
+              v-model="editForm.description"
+              type="textarea"
+              :rows="6"
+              placeholder="请详细描述您的技术需求..."
+            />
+          </el-form-item>
+
+          <el-form-item label="紧急程度">
+            <el-select v-model="editForm.urgency_level" placeholder="请选择紧急程度" style="width: 100%">
+              <el-option label="一般" value="一般" />
+              <el-option label="较急" value="较急" />
+              <el-option label="紧急" value="紧急" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="合作方式偏好">
+            <el-select
+              v-model="editForm.cooperation_preference"
+              multiple
+              placeholder="请选择合作方式偏好（可多选）"
+              style="width: 100%"
+            >
+              <el-option label="技术转让" value="技术转让" />
+              <el-option label="联合开发" value="联合开发" />
+              <el-option label="授权许可" value="授权许可" />
+              <el-option label="技术咨询" value="技术咨询" />
+              <el-option label="其他" value="其他" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="预算范围">
+            <el-select v-model="editForm.budget_range" placeholder="请选择预算范围" style="width: 100%">
+              <el-option label="10万以下" value="10万以下" />
+              <el-option label="10-50万" value="10-50万" />
+              <el-option label="50-100万" value="50-100万" />
+              <el-option label="100-500万" value="100-500万" />
+              <el-option label="500万以上" value="500万以上" />
+              <el-option label="面议" value="面议" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="企业名称" prop="company_name">
+            <el-input v-model="editForm.company_name" placeholder="请输入企业名称" />
+          </el-form-item>
+
+          <el-form-item label="联系人" prop="contact_name">
+            <el-input v-model="editForm.contact_name" placeholder="请输入联系人姓名" />
+          </el-form-item>
+
+          <el-form-item label="电话" prop="contact_phone">
+            <el-input v-model="editForm.contact_phone" placeholder="请输入联系电话" />
+          </el-form-item>
+
+          <el-form-item label="联系邮箱">
+            <el-input v-model="editForm.contact_email" type="email" placeholder="请输入联系邮箱（可选）" />
+          </el-form-item>
+        </template>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="closeEditDialog">取消</el-button>
+        <el-button type="primary" @click="submitEdit" :loading="submittingEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -223,12 +397,14 @@ const loadMatchHistory = async () => {
 const matchHistory = ref([])
 const loadingHistory = ref(false)
 
-// 监听标签页切换，刷新匹配历史
+// 监听标签页切换，刷新数据
 watch(activeTab, async (newTab) => {
   if (newTab === 'history') {
     loadingHistory.value = true
     matchHistory.value = await loadMatchHistory()
     loadingHistory.value = false
+  } else if (newTab === 'publishments') {
+    await loadMyPublishments()
   }
 })
 
@@ -352,30 +528,56 @@ const handleRematch = async (row) => {
 const passwordFormRef = ref()
 const changingPassword = ref(false)
 
-// 我的发布 Mock 数据
-const myPublishments = ref([
-  {
-    id: 1,
-    title: '基于深度学习的智能图像识别系统',
-    type: '成果',
-    field: '人工智能/计算机视觉',
-    publishTime: '2024-01-15'
-  },
-  {
-    id: 2,
-    title: '寻求AI驱动的智能客服解决方案',
-    type: '需求',
-    field: '互联网/电商',
-    publishTime: '2024-01-10'
-  },
-  {
-    id: 3,
-    title: '大语言模型驱动的智能对话系统',
-    type: '成果',
-    field: '自然语言处理/大语言模型',
-    publishTime: '2024-01-08'
+// 我的发布数据
+const myPublishments = ref([])
+const loadingPublishments = ref(false)
+
+// 加载我的发布内容
+const loadMyPublishments = async () => {
+  loadingPublishments.value = true
+  try {
+    const achievementsPromise = api.get('/publish/my-achievements', {
+      params: { page: 1, page_size: 100 }
+    }).catch(() => ({ data: { items: [] } }))
+    
+    const needsPromise = api.get('/publish/my-needs', {
+      params: { page: 1, page_size: 100 }
+    }).catch(() => ({ data: { items: [] } }))
+    
+    const [achievementsRes, needsRes] = await Promise.all([achievementsPromise, needsPromise])
+    
+    const achievements = (achievementsRes.data?.items || []).map(item => ({
+      id: item.id,
+      achievement_id: item.id,
+      title: item.name || '无标题',
+      type: '成果',
+      field: item.field || '未分类',
+      publishTime: item.created_at ? item.created_at.split(' ')[0] : '',
+      rawData: item
+    }))
+    
+    const needs = (needsRes.data?.items || []).map(item => ({
+      id: item.id,
+      need_id: item.id,
+      title: item.title || '无标题',
+      type: '需求',
+      field: item.industry || '未分类',
+      publishTime: item.created_at ? item.created_at.split(' ')[0] : '',
+      rawData: item
+    }))
+    
+    // 合并并按时间排序
+    myPublishments.value = [...achievements, ...needs].sort((a, b) => {
+      return new Date(b.publishTime) - new Date(a.publishTime)
+    })
+  } catch (error) {
+    console.error('加载我的发布内容失败:', error)
+    ElMessage.error('加载发布内容失败')
+    myPublishments.value = []
+  } finally {
+    loadingPublishments.value = false
   }
-])
+}
 
 // 密码修改表单
 const passwordForm = reactive({
@@ -418,40 +620,249 @@ const getRoleTagType = (role) => {
   return 'info'
 }
 
+// 编辑对话框相关
+const showEditDialog = ref(false)
+const editingItem = ref(null)
+const isEditingAchievement = ref(false)
+const editFormRef = ref()
+const submittingEdit = ref(false)
+
+// 编辑表单数据
+const editForm = reactive({
+  // 成果字段
+  name: '',
+  field: '',
+  description: '',
+  application: '',
+  cooperation_mode: [],
+  contact_name: '',
+  contact_phone: '',
+  contact_email: '',
+  // 需求字段
+  title: '',
+  industry: '',
+  urgency_level: '',
+  cooperation_preference: [],
+  budget_range: '',
+  company_name: ''
+})
+
+// 编辑表单验证规则（动态规则，根据编辑类型返回不同规则）
+const getEditFormRules = () => {
+  if (isEditingAchievement.value) {
+    return {
+      name: [{ required: true, message: '请输入成果名称', trigger: 'blur' }],
+      field: [{ required: true, message: '请选择技术领域', trigger: 'change' }],
+      description: [
+        { required: true, message: '请输入成果简介', trigger: 'blur' },
+        { min: 20, message: '成果简介至少需要20个字符', trigger: 'blur' }
+      ],
+      application: [{ required: true, message: '请输入应用场景', trigger: 'blur' }],
+      contact_name: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
+      contact_phone: [
+        { required: true, message: '请输入联系电话', trigger: 'blur' },
+        { pattern: /^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$/, message: '请输入正确的电话号码', trigger: 'blur' }
+      ]
+    }
+  } else {
+    return {
+      title: [{ required: true, message: '请输入需求标题', trigger: 'blur' }],
+      industry: [{ required: true, message: '请选择行业领域', trigger: 'change' }],
+      description: [
+        { required: true, message: '请输入需求详细描述', trigger: 'blur' },
+        { min: 20, message: '需求描述至少需要20个字符', trigger: 'blur' }
+      ],
+      company_name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }],
+      contact_name: [{ required: true, message: '请输入联系人', trigger: 'blur' }],
+      contact_phone: [
+        { required: true, message: '请输入联系电话', trigger: 'blur' },
+        { pattern: /^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$/, message: '请输入正确的电话号码', trigger: 'blur' }
+      ]
+    }
+  }
+}
+
+// 计算属性：动态获取验证规则
+const editFormRules = computed(() => getEditFormRules())
+
+// 重置编辑表单
+const resetEditForm = () => {
+  Object.assign(editForm, {
+    name: '',
+    field: '',
+    description: '',
+    application: '',
+    cooperation_mode: [],
+    contact_name: '',
+    contact_phone: '',
+    contact_email: '',
+    title: '',
+    industry: '',
+    urgency_level: '',
+    cooperation_preference: [],
+    budget_range: '',
+    company_name: ''
+  })
+}
+
 // 编辑
-const handleEdit = (row) => {
-  ElMessage.info(`编辑功能开发中... (ID: ${row.id})`)
-  // 这里可以实现跳转到编辑页面或打开编辑对话框
+const handleEdit = async (row) => {
+  editingItem.value = row
+  isEditingAchievement.value = row.type === '成果'
+  
+  // 填充表单数据
+  if (row.type === '成果') {
+    const data = row.rawData || {}
+    Object.assign(editForm, {
+      name: data.name || row.title || '',
+      field: data.field || row.field || '',
+      description: data.description || '',
+      application: data.application || '',
+      cooperation_mode: data.cooperation_mode || [],
+      contact_name: data.contact_name || '',
+      contact_phone: data.contact_phone || '',
+      contact_email: data.contact_email || ''
+    })
+  } else {
+    const data = row.rawData || {}
+    Object.assign(editForm, {
+      title: data.title || row.title || '',
+      industry: data.industry || row.field || '',
+      description: data.description || '',
+      urgency_level: data.urgency_level || '',
+      cooperation_preference: data.cooperation_preference || [],
+      budget_range: data.budget_range || '',
+      company_name: data.company_name || '',
+      contact_name: data.contact_name || '',
+      contact_phone: data.contact_phone || '',
+      contact_email: data.contact_email || ''
+    })
+  }
+  
+  showEditDialog.value = true
+}
+
+// 提交编辑
+const submitEdit = async () => {
+  if (!editFormRef.value || submittingEdit.value) return
+  
+  submittingEdit.value = true
+  
+  try {
+    // 先进行表单验证
+    const valid = await editFormRef.value.validate()
+    if (!valid) {
+      submittingEdit.value = false
+      return // 验证失败，不关闭对话框
+    }
+    
+    if (isEditingAchievement.value) {
+      // 更新成果
+      await api.put(`/publish/achievement/${editingItem.value.achievement_id || editingItem.value.id}`, {
+        name: editForm.name,
+        field: editForm.field,
+        description: editForm.description,
+        application: editForm.application,
+        cooperation_mode: editForm.cooperation_mode,
+        contact_name: editForm.contact_name,
+        contact_phone: editForm.contact_phone,
+        contact_email: editForm.contact_email
+      })
+      ElMessage.success('成果更新成功')
+    } else {
+      // 更新需求
+      await api.put(`/publish/need/${editingItem.value.need_id || editingItem.value.id}`, {
+        title: editForm.title,
+        industry: editForm.industry,
+        description: editForm.description,
+        urgency_level: editForm.urgency_level,
+        cooperation_preference: editForm.cooperation_preference,
+        budget_range: editForm.budget_range,
+        company_name: editForm.company_name,
+        contact_name: editForm.contact_name,
+        contact_phone: editForm.contact_phone,
+        contact_email: editForm.contact_email
+      })
+      ElMessage.success('需求更新成功')
+    }
+    
+    // 关闭对话框并刷新列表
+    closeEditDialog()
+    await loadMyPublishments()
+  } catch (error) {
+    console.error('更新失败:', error)
+    ElMessage.error(error.response?.data?.detail || '更新失败，请稍后重试')
+    // 更新失败时不关闭对话框，让用户修改后重试
+  } finally {
+    submittingEdit.value = false
+  }
+}
+
+// 关闭编辑对话框
+const closeEditDialog = () => {
+  try {
+    // 先清除表单验证状态
+    if (editFormRef.value) {
+      editFormRef.value.clearValidate()
+    }
+    // 重置表单数据
+    resetEditForm()
+    // 清空编辑项
+    editingItem.value = null
+    // 最后关闭对话框（确保其他清理操作先完成）
+    showEditDialog.value = false
+  } catch (e) {
+    console.error('关闭对话框失败:', e)
+    // 即使出错也强制关闭
+    showEditDialog.value = false
+  }
 }
 
 // 删除
-const handleDelete = (row) => {
-  ElMessageBox.confirm(
-    `确定要删除"${row.title}"吗？`,
-    '确认删除',
-    {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
+const handleDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除"${row.title}"吗？删除后无法恢复。`,
+      '确认删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    // 调用后端API删除
+    if (row.type === '成果') {
+      await api.delete(`/publish/achievement/${row.achievement_id || row.id}`)
+    } else {
+      await api.delete(`/publish/need/${row.need_id || row.id}`)
     }
-  ).then(() => {
+    
     // 从列表中删除
     const index = myPublishments.value.findIndex(item => item.id === row.id)
     if (index > -1) {
       myPublishments.value.splice(index, 1)
-      ElMessage.success('删除成功')
     }
-  }).catch(() => {
-    // 用户取消
-  })
+    
+    ElMessage.success('删除成功')
+  } catch (error) {
+    if (error === 'cancel') {
+      // 用户取消，不处理
+      return
+    }
+    console.error('删除失败:', error)
+    ElMessage.error(error.response?.data?.detail || '删除失败，请稍后重试')
+  }
 }
 
-// 初始化时加载匹配历史（如果当前标签页是历史）
+// 初始化时加载数据
 onMounted(async () => {
   if (activeTab.value === 'history') {
     loadingHistory.value = true
     matchHistory.value = await loadMatchHistory()
     loadingHistory.value = false
+  } else if (activeTab.value === 'publishments') {
+    await loadMyPublishments()
   }
 })
 
@@ -464,21 +875,30 @@ const handleChangePassword = async () => {
 
     changingPassword.value = true
 
-    // 模拟 API 调用
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      // 调用后端API修改密码
+      await api.post('/auth/change-password', {
+        old_password: passwordForm.oldPassword,
+        new_password: passwordForm.newPassword
+      })
 
-    changingPassword.value = false
-    ElMessage.success('密码修改成功')
+      ElMessage.success('密码修改成功')
 
-    // 清空表单
-    Object.assign(passwordForm, {
-      oldPassword: '',
-      newPassword: '',
-      confirmPassword: ''
-    })
+      // 清空表单
+      Object.assign(passwordForm, {
+        oldPassword: '',
+        newPassword: '',
+        confirmPassword: ''
+      })
 
-    // 清除验证状态
-    passwordFormRef.value.clearValidate()
+      // 清除验证状态
+      passwordFormRef.value.clearValidate()
+    } catch (error) {
+      console.error('修改密码失败:', error)
+      ElMessage.error(error.response?.data?.detail || '密码修改失败，请检查当前密码是否正确')
+    } finally {
+      changingPassword.value = false
+    }
   })
 }
 </script>
