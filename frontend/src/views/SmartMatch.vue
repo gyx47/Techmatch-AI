@@ -89,8 +89,8 @@
         <el-row :gutter="24">
           <el-col :span="8" v-for="item in filteredResults" :key="item.id">
             <div class="result-card-wrapper">
-              <div class="paper-card" :class="{ 'selected': isPaperSelected(item.paper_id) }">
-                <div class="card-checkbox-wrapper" v-if="item.type === '论文'">
+              <div class="paper-card" :class="{ 'selected': item.type === '论文' && isPaperSelected(item.paper_id) }">
+                <div class="card-checkbox-wrapper" v-if="item.type === '论文' && item.paper_id">
                   <el-checkbox 
                     v-model="selectedPaperIds" 
                     :value="item.paper_id"
@@ -887,7 +887,7 @@ const selectedPaperIds = ref([])
 const selectedPapers = computed(() => {
   // 只返回论文（成果不能生成实现路径）
   return matchResults.value.filter(item => 
-    item.type === '论文' && selectedPaperIds.value.includes(item.paper_id)
+    item.type === '论文' && item.paper_id && selectedPaperIds.value.includes(item.paper_id)
   )
 })
 const generatingPath = ref(false)
@@ -1010,6 +1010,8 @@ const restoreFromHistory = (historyId) => {
       if (historyItem.results && historyItem.results.length > 0) {
         matchResults.value = historyItem.results
         showResults.value = true
+        // 清理 selectedPaperIds，确保不会有无效值
+        cleanSelectedPaperIds()
       } else {
         showResults.value = false
       }
@@ -1070,6 +1072,8 @@ const checkMatchTaskStatus = async () => {
         currentHistoryId.value = taskState.historyId
       }
       loading.value = false
+      // 清理 selectedPaperIds，确保不会有无效值
+      cleanSelectedPaperIds()
       localStorage.removeItem('smartMatchTaskState')
       if (matchTaskPollTimer) {
         clearInterval(matchTaskPollTimer)
@@ -1114,6 +1118,9 @@ const checkMatchTaskStatus = async () => {
 
 // 根据用户角色自动设置默认模式，并处理路由参数
 onMounted(async () => {
+  // 清理 selectedPaperIds 中的无效值（null、undefined 等）
+  cleanSelectedPaperIds()
+  
   // 检查是否有正在进行的匹配任务
   const taskStateStr = localStorage.getItem('smartMatchTaskState')
   if (taskStateStr) {
@@ -1218,6 +1225,8 @@ onMounted(async () => {
             matchResults.value = papers
             showResults.value = true
             currentMatchMode.value = matchMode.value
+            // 清理 selectedPaperIds，确保不会有无效值
+            cleanSelectedPaperIds()
             
             // 如果有历史ID，也需要恢复
             if (data.historyId) {
@@ -1564,10 +1573,15 @@ const highlightKeywords = (text) => {
 
 // 论文选择相关函数
 const isPaperSelected = (paperId) => {
+  // 只处理有效的 paper_id（不能是 null 或 undefined）
+  if (!paperId) return false
   return selectedPaperIds.value.includes(paperId)
 }
 
 const handlePaperSelection = (paperId, checked) => {
+  // 只处理有效的 paper_id（不能是 null 或 undefined）
+  if (!paperId) return
+  
   if (checked && !selectedPaperIds.value.includes(paperId)) {
     selectedPaperIds.value.push(paperId)
   } else if (!checked) {
@@ -1586,6 +1600,11 @@ const handlePaperSelection = (paperId, checked) => {
 const clearSelection = () => {
   selectedPaperIds.value = []
   ElMessage.info('已清空选择')
+}
+
+// 清理 selectedPaperIds 中的无效值（null、undefined 等）
+const cleanSelectedPaperIds = () => {
+  selectedPaperIds.value = selectedPaperIds.value.filter(id => id != null && id !== undefined && id !== '')
 }
 
 // 生成实现路径

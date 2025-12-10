@@ -970,10 +970,20 @@ const handleChangePassword = async () => {
   font-size: 13px;
   color: #6b7280;
   margin-top: 12px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .user-meta .el-icon {
   font-size: 16px;
+  flex-shrink: 0;
+}
+
+.user-meta span {
+  word-break: break-all;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 /* Tabs 内容 */

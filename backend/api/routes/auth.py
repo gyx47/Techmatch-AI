@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 import hashlib
 import jwt
@@ -26,7 +26,26 @@ class UserRegister(BaseModel):
     username: str
     email: str
     password: str
-    role: str 
+    role: str
+    
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not v:
+            raise ValueError('邮箱不能为空')
+        if len(v) < 5:
+            raise ValueError('邮箱长度不能少于5个字符')
+        if len(v) > 150:
+            raise ValueError('邮箱长度不能超过150个字符')
+        # 基本格式验证
+        if '@' not in v:
+            raise ValueError('邮箱格式不正确，必须包含@符号')
+        parts = v.split('@')
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError('邮箱格式不正确')
+        if '.' not in parts[1]:
+            raise ValueError('邮箱格式不正确，域名必须包含点号')
+        return v 
 
 class UserLogin(BaseModel):
     username: str

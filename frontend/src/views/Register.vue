@@ -83,7 +83,22 @@ const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' }
+    { 
+      min: 5, 
+      max: 150, 
+      message: '邮箱长度应在 5-150 个字符之间', 
+      trigger: 'blur' 
+    },
+    { 
+      type: 'email', 
+      message: '请输入正确的邮箱格式（例如：user@example.com）', 
+      trigger: 'blur' 
+    },
+    {
+      pattern: /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+      message: '邮箱格式不正确，请使用标准邮箱格式（例如：user@example.com）',
+      trigger: 'blur'
+    }
   ],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
   confirmPassword: [

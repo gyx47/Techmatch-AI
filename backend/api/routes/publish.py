@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 import asyncio
 from database.database import (
     create_published_achievement,
@@ -31,48 +31,48 @@ router = APIRouter()
 # =======================
 
 class AchievementCreate(BaseModel):
-    name: str
-    field: str
-    description: str
-    application: Optional[str] = None
+    name: str = Field(..., max_length=200, description="成果名称")
+    field: str = Field(..., max_length=100, description="技术领域")
+    description: str = Field(..., max_length=2000, description="成果简介")
+    application: Optional[str] = Field(None, max_length=1000, description="应用场景")
     cooperation_mode: Optional[List[str]] = None
-    contact_name: str
-    contact_phone: str
-    contact_email: Optional[str] = None
+    contact_name: str = Field(..., max_length=50, description="联系人")
+    contact_phone: str = Field(..., max_length=20, description="联系电话")
+    contact_email: Optional[str] = Field(None, max_length=150, description="联系邮箱")
 
 class AchievementUpdate(BaseModel):
-    name: Optional[str] = None
-    field: Optional[str] = None
-    description: Optional[str] = None
-    application: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=200, description="成果名称")
+    field: Optional[str] = Field(None, max_length=100, description="技术领域")
+    description: Optional[str] = Field(None, max_length=2000, description="成果简介")
+    application: Optional[str] = Field(None, max_length=1000, description="应用场景")
     cooperation_mode: Optional[List[str]] = None
-    contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_email: Optional[str] = None
+    contact_name: Optional[str] = Field(None, max_length=50, description="联系人")
+    contact_phone: Optional[str] = Field(None, max_length=20, description="联系电话")
+    contact_email: Optional[str] = Field(None, max_length=150, description="联系邮箱")
 
 class NeedCreate(BaseModel):
-    title: str
-    industry: str
-    description: str
-    urgency_level: Optional[str] = None
+    title: str = Field(..., max_length=200, description="需求标题")
+    industry: str = Field(..., max_length=100, description="行业领域")
+    description: str = Field(..., max_length=2000, description="需求详细描述")
+    urgency_level: Optional[str] = Field(None, max_length=20, description="紧急程度")
     cooperation_preference: Optional[List[str]] = None
-    budget_range: Optional[str] = None
-    company_name: str
-    contact_name: str
-    contact_phone: str
-    contact_email: Optional[str] = None
+    budget_range: Optional[str] = Field(None, max_length=50, description="预算范围")
+    company_name: str = Field(..., max_length=100, description="企业名称")
+    contact_name: str = Field(..., max_length=50, description="联系人")
+    contact_phone: str = Field(..., max_length=20, description="联系电话")
+    contact_email: Optional[str] = Field(None, max_length=150, description="联系邮箱")
 
 class NeedUpdate(BaseModel):
-    title: Optional[str] = None
-    industry: Optional[str] = None
-    description: Optional[str] = None
-    urgency_level: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=200, description="需求标题")
+    industry: Optional[str] = Field(None, max_length=100, description="行业领域")
+    description: Optional[str] = Field(None, max_length=2000, description="需求详细描述")
+    urgency_level: Optional[str] = Field(None, max_length=20, description="紧急程度")
     cooperation_preference: Optional[List[str]] = None
-    budget_range: Optional[str] = None
-    company_name: Optional[str] = None
-    contact_name: Optional[str] = None
-    contact_phone: Optional[str] = None
-    contact_email: Optional[str] = None
+    budget_range: Optional[str] = Field(None, max_length=50, description="预算范围")
+    company_name: Optional[str] = Field(None, max_length=100, description="企业名称")
+    contact_name: Optional[str] = Field(None, max_length=50, description="联系人")
+    contact_phone: Optional[str] = Field(None, max_length=20, description="联系电话")
+    contact_email: Optional[str] = Field(None, max_length=150, description="联系邮箱")
 
 # =======================
 # 成果相关接口

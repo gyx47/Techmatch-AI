@@ -53,6 +53,8 @@
                 <el-form-item label="成果名称" prop="name">
                   <el-input
                     v-model="achievementForm.name"
+                    :maxlength="200"
+                    show-word-limit
                     placeholder="请输入成果名称"
                     :disabled="submitting"
                   />
@@ -83,6 +85,8 @@
                     v-model="achievementForm.description"
                     type="textarea"
                     :rows="6"
+                    :maxlength="2000"
+                    show-word-limit
                     placeholder="请详细描述您的科研成果，包括技术特点、创新点、应用价值等..."
                     :disabled="submitting"
                   />
@@ -93,6 +97,8 @@
                     v-model="achievementForm.application"
                     type="textarea"
                     :rows="3"
+                    :maxlength="1000"
+                    show-word-limit
                     placeholder="请描述该成果的应用场景和适用领域..."
                     :disabled="submitting"
                   />
@@ -117,6 +123,7 @@
                 <el-form-item label="联系人" prop="contact_name">
                   <el-input
                     v-model="achievementForm.contact_name"
+                    :maxlength="50"
                     placeholder="请输入联系人姓名"
                     :disabled="submitting"
                   />
@@ -125,6 +132,7 @@
                 <el-form-item label="电话" prop="contact_phone">
                   <el-input
                     v-model="achievementForm.contact_phone"
+                    :maxlength="20"
                     placeholder="请输入联系电话"
                     :disabled="submitting"
                   />
@@ -134,6 +142,7 @@
                   <el-input
                     v-model="achievementForm.contact_email"
                     type="email"
+                    :maxlength="150"
                     placeholder="请输入联系邮箱（可选）"
                     :disabled="submitting"
                   />
@@ -165,6 +174,8 @@
                 <el-form-item label="需求标题" prop="title">
                   <el-input
                     v-model="needForm.title"
+                    :maxlength="200"
+                    show-word-limit
                     placeholder="请输入需求标题"
                     :disabled="submitting"
                   />
@@ -195,6 +206,8 @@
                     v-model="needForm.description"
                     type="textarea"
                     :rows="6"
+                    :maxlength="2000"
+                    show-word-limit
                     placeholder="请详细描述您的技术需求，包括具体需求、技术要求、预期目标等..."
                     :disabled="submitting"
                   />
@@ -248,6 +261,7 @@
                 <el-form-item label="企业名称" prop="company_name">
                   <el-input
                     v-model="needForm.company_name"
+                    :maxlength="100"
                     placeholder="请输入企业名称"
                     :disabled="submitting"
                   />
@@ -256,6 +270,7 @@
                 <el-form-item label="联系人" prop="contact_name">
                   <el-input
                     v-model="needForm.contact_name"
+                    :maxlength="50"
                     placeholder="请输入联系人姓名"
                     :disabled="submitting"
                   />
@@ -264,6 +279,7 @@
                 <el-form-item label="电话" prop="contact_phone">
                   <el-input
                     v-model="needForm.contact_phone"
+                    :maxlength="20"
                     placeholder="请输入联系电话"
                     :disabled="submitting"
                   />
@@ -273,6 +289,7 @@
                   <el-input
                     v-model="needForm.contact_email"
                     type="email"
+                    :maxlength="150"
                     placeholder="请输入联系邮箱（可选）"
                     :disabled="submitting"
                   />
@@ -299,7 +316,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
@@ -383,6 +400,9 @@ const submitAchievement = async () => {
       const response = await api.post('/publish/achievement', achievementForm)
       ElMessage.success('成果发布成功！')
       
+      // 先清除表单验证状态
+      achievementFormRef.value.clearValidate()
+      
       // 清空表单
       Object.assign(achievementForm, {
         name: '',
@@ -395,8 +415,12 @@ const submitAchievement = async () => {
         contact_email: ''
       })
 
-      // 清除表单验证状态
+      // 使用 nextTick 确保 DOM 更新后再清除验证状态
+      await nextTick()
       achievementFormRef.value.clearValidate()
+      
+      // 重置表单字段的验证状态
+      achievementFormRef.value.resetFields()
     } catch (error) {
       ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
     } finally {
@@ -418,6 +442,9 @@ const submitNeed = async () => {
       const response = await api.post('/publish/need', needForm)
       ElMessage.success('需求发布成功！')
       
+      // 先清除表单验证状态
+      needFormRef.value.clearValidate()
+      
       // 清空表单
       Object.assign(needForm, {
         title: '',
@@ -432,8 +459,12 @@ const submitNeed = async () => {
         contact_email: ''
       })
 
-      // 清除表单验证状态
+      // 使用 nextTick 确保 DOM 更新后再清除验证状态
+      await nextTick()
       needFormRef.value.clearValidate()
+      
+      // 重置表单字段的验证状态
+      needFormRef.value.resetFields()
     } catch (error) {
       ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
     } finally {

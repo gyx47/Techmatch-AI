@@ -155,7 +155,7 @@
                     </span>
                     <span class="meta-item">
                       <el-icon><Clock /></el-icon>
-                      {{ item.display_time ? item.display_time.split('T')[0] : '' }}
+                      {{ formatLocalTime(item.display_time) }}
                     </span>
                   </div>
                 </div>
@@ -233,7 +233,7 @@
                     </span>
                     <span class="meta-item">
                       <el-icon><Clock /></el-icon>
-                      {{ item.publish_time ? item.publish_time.split('T')[0] : '' }}
+                      {{ formatLocalTime(item.publish_time) }}
                     </span>
                   </div>
                 </div>
@@ -290,7 +290,7 @@
             </div>
             <div class="detail-section">
               <h4 class="section-title">发布日期</h4>
-              <p class="section-content">{{ currentItem.raw_data.published_date }}</p>
+              <p class="section-content">{{ formatLocalTime(currentItem.raw_data.published_date) }}</p>
             </div>
             <div class="detail-section">
               <h4 class="section-title">PDF链接</h4>
@@ -332,7 +332,7 @@
             </div>
             <div class="detail-section">
               <h4 class="section-title">发布时间</h4>
-              <p class="section-content">{{ currentItem.raw_data.created_at ? currentItem.raw_data.created_at.split('T')[0] : '' }}</p>
+              <p class="section-content">{{ formatLocalTime(currentItem.raw_data.created_at) }}</p>
             </div>
             <div class="detail-section">
               <el-divider />
@@ -382,7 +382,7 @@
             </div>
             <div class="detail-section">
               <h4 class="section-title">发布时间</h4>
-              <p class="section-content">{{ currentItem.publish_time ? currentItem.publish_time.split('T')[0] : '' }}</p>
+              <p class="section-content">{{ formatLocalTime(currentItem.publish_time) }}</p>
             </div>
             <div class="detail-section">
               <el-divider />
@@ -461,6 +461,54 @@ const router = useRouter()
 const route = useRoute()
 
 const activeTab = ref('achievements')
+
+// 格式化时间：将 UTC 时间转换为本地时间
+const formatLocalTime = (timeString) => {
+  if (!timeString) return ''
+  try {
+    let date
+    
+    // 如果时间字符串包含 'T'，说明是 ISO 格式
+    if (timeString.includes('T')) {
+      // 如果时间字符串以 Z 结尾，说明是 UTC 时间
+      if (timeString.endsWith('Z')) {
+        date = new Date(timeString)
+      } else if (timeString.includes('+') || (timeString.match(/-\d{2}:\d{2}$/) && !timeString.endsWith('Z'))) {
+        // 包含时区信息（如 +08:00 或 -05:00），直接解析
+        date = new Date(timeString)
+      } else {
+        // 没有时区信息，假设是 UTC 时间，添加 Z 后缀
+        date = new Date(timeString + 'Z')
+      }
+    } else if (timeString.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)) {
+      // SQLite 格式：YYYY-MM-DD HH:MM:SS（UTC 时间）
+      // 将其转换为 ISO 格式并添加 Z 表示 UTC
+      date = new Date(timeString.replace(' ', 'T') + 'Z')
+    } else if (timeString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      // 只有日期，直接返回
+      return timeString
+    } else {
+      // 其他格式，尝试直接解析
+      date = new Date(timeString)
+    }
+    
+    // 检查日期是否有效
+    if (isNaN(date.getTime())) {
+      console.warn('无效的日期:', timeString)
+      return timeString.split('T')[0] || timeString.split(' ')[0] || ''
+    }
+    
+    // 转换为本地时间并格式化为 YYYY-MM-DD
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  } catch (error) {
+    console.error('时间格式化失败:', error, timeString)
+    // 尝试提取日期部分
+    return timeString.split('T')[0] || timeString.split(' ')[0] || ''
+  }
+}
 
 // 根据路由参数恢复标签页状态
 onMounted(() => {
@@ -1113,10 +1161,13 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: flex-start;
   gap: 20px;
+  min-width: 0; /* 允许 flex 子元素收缩 */
 }
 
 .card-main {
   flex: 1;
+  min-width: 0; /* 允许 flex 子元素收缩，防止溢出 */
+  overflow: hidden; /* 防止内容溢出 */
 }
 
 .card-header {
@@ -1133,6 +1184,10 @@ onUnmounted(() => {
   color: #1f2937;
   margin: 0;
   flex: 1;
+  word-break: break-word;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 .card-description {
@@ -1146,6 +1201,10 @@ onUnmounted(() => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
+  word-break: break-word;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-height: 4.8em; /* 3行 * 1.6行高 */
 }
 
 .card-meta {
@@ -1168,6 +1227,7 @@ onUnmounted(() => {
 
 .card-action {
   flex-shrink: 0;
+  min-width: fit-content;
 }
 
 .drawer-content {
@@ -1201,6 +1261,10 @@ onUnmounted(() => {
   color: #6b7280;
   line-height: 1.6;
   margin: 0;
+  word-break: break-word;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap; /* 保留换行，但允许自动换行 */
 }
 
 .contact-info {
