@@ -92,6 +92,22 @@ const getRoleText = (role) => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 20px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    padding: 0 15px;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header-content {
+    padding: 0 10px;
+    gap: 6px;
+  }
 }
 
 .logo {
@@ -100,16 +116,73 @@ const getRoleText = (role) => {
   font-size: 20px;
   font-weight: bold;
   color: #409eff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.logo span {
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 
 .logo .el-icon {
   margin-right: 8px;
   font-size: 24px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .logo {
+    font-size: 16px;
+  }
+  
+  .logo .el-icon {
+    font-size: 20px;
+    margin-right: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .logo {
+    font-size: 14px;
+  }
+  
+  .logo .el-icon {
+    font-size: 18px;
+    margin-right: 4px;
+  }
+  
+  .logo span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
 }
 
 .nav-menu {
   flex: 1;
   margin: 0 40px;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .nav-menu {
+    margin: 0 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .nav-menu {
+    margin: 0 10px;
+  }
 }
 
 .nav-menu .el-menu-item {

@@ -39,21 +39,21 @@
       <div class="section" v-if="vectorStats">
         <h3>数据统计</h3>
         <el-row :gutter="20">
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <div class="stat-card">
               <div class="stat-label">向量数据库</div>
               <div class="stat-value">{{ vectorStats.vector_db_count || 0 }}</div>
               <div class="stat-desc">已索引论文数</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <div class="stat-card">
               <div class="stat-label">数据库</div>
               <div class="stat-value">{{ vectorStats.database_count || 0 }}</div>
               <div class="stat-desc">总论文数</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :xs="24" :sm="12" :md="8">
             <div class="stat-card">
               <div class="stat-label">索引进度</div>
               <div class="stat-value">{{ vectorStats.indexed_percentage || 0 }}%</div>
@@ -1068,16 +1068,67 @@ onUnmounted(() => {
   padding: 0 20px;
 }
 
+@media (max-width: 768px) {
+  .container {
+    padding: 0 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 0 10px;
+  }
+}
+
 .title {
   font-size: 32px;
   margin: 10px 0;
   color: #1f2937;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+@media (max-width: 768px) {
+  .title {
+    font-size: 22px;
+    margin: 8px 0;
+  }
+  
+  .subtitle {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .title {
+    font-size: 18px;
+    margin: 6px 0;
+  }
+  
+  .subtitle {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  .title {
+    font-size: 16px;
+    margin: 5px 0;
+  }
+  
+  .subtitle {
+    font-size: 11px;
+  }
 }
 
 .subtitle {
   color: #6b7280;
   margin-bottom: 24px;
   font-size: 14px;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .actions {
@@ -1107,6 +1158,17 @@ onUnmounted(() => {
   border-radius: 8px;
   padding: 20px;
   text-align: center;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 769px) {
+  .stat-card {
+    margin-bottom: 0;
+  }
 }
 
 .stat-label {

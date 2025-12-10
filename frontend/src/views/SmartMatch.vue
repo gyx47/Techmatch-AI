@@ -87,7 +87,7 @@
         </div>
 
         <el-row :gutter="24">
-          <el-col :span="8" v-for="item in filteredResults" :key="item.id">
+          <el-col :xs="24" :sm="12" :md="8" v-for="item in filteredResults" :key="item.id">
             <div class="result-card-wrapper">
               <div class="paper-card" :class="{ 'selected': item.type === '论文' && isPaperSelected(item.paper_id) }">
                 <div class="card-checkbox-wrapper" v-if="item.type === '论文' && item.paper_id">
