@@ -922,7 +922,8 @@ const saveMatchState = () => {
     searchText: searchText.value,
     matchMode: matchMode.value,
     hasResults: showResults.value,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    userId: userStore.userInfo?.id || null // 保存当前用户ID
   }
   localStorage.setItem('smartMatchState', JSON.stringify(state))
 }
@@ -930,11 +931,23 @@ const saveMatchState = () => {
 // 恢复匹配状态（从合作方案详情返回时）
 const restoreMatchState = () => {
   try {
+    const currentUserId = userStore.userInfo?.id
+    
     // 首先检查 URL 参数
     if (route.query.restore === 'true') {
       const saved = localStorage.getItem('smartMatchState')
       if (saved) {
         const state = JSON.parse(saved)
+        
+        // 检查用户ID是否匹配（如果状态中有用户ID）
+        if (state.userId !== undefined && state.userId !== null) {
+          if (currentUserId !== state.userId) {
+            // 用户不匹配，清除状态
+            localStorage.removeItem('smartMatchState')
+            return false
+          }
+        }
+        
         // 检查状态是否过期（30分钟内有效）
         const isExpired = Date.now() - state.timestamp > 30 * 60 * 1000
         
@@ -971,6 +984,16 @@ const restoreMatchState = () => {
     const saved = localStorage.getItem('smartMatchState')
     if (saved) {
       const state = JSON.parse(saved)
+      
+      // 检查用户ID是否匹配（如果状态中有用户ID）
+      if (state.userId !== undefined && state.userId !== null) {
+        if (currentUserId !== state.userId) {
+          // 用户不匹配，清除状态
+          localStorage.removeItem('smartMatchState')
+          return false
+        }
+      }
+      
       const isExpired = Date.now() - state.timestamp > 30 * 60 * 1000
       
       if (!isExpired && state.hasResults && state.results) {
@@ -980,10 +1003,15 @@ const restoreMatchState = () => {
         showResults.value = true
         currentMatchMode.value = state.matchMode || 'enterprise'
         return true
+      } else if (isExpired) {
+        // 状态过期，清除
+        localStorage.removeItem('smartMatchState')
       }
     }
   } catch (e) {
     console.error('恢复匹配状态失败:', e)
+    // 出错时清除状态
+    localStorage.removeItem('smartMatchState')
   }
   return false
 }
@@ -996,11 +1024,26 @@ const clearMatchState = () => {
 // 从匹配历史恢复结果
 const restoreFromHistory = (historyId) => {
   try {
-    const historyKey = 'matchHistory'
+    const currentUserId = userStore.userInfo?.id
+    if (!currentUserId) {
+      // 如果没有用户ID，无法恢复历史
+      return false
+    }
+    
+    // 使用用户ID作为key的一部分，确保只恢复当前用户的历史记录
+    const historyKey = `matchHistory_${currentUserId}`
     const history = JSON.parse(localStorage.getItem(historyKey) || '[]')
     const historyItem = history.find(item => item.id === parseInt(historyId))
     
     if (historyItem && historyItem.results) {
+      // 检查用户ID是否匹配（如果历史记录中有用户ID）
+      if (historyItem.userId !== undefined && historyItem.userId !== null) {
+        if (currentUserId !== historyItem.userId) {
+          // 用户不匹配，不恢复
+          return false
+        }
+      }
+      
       // 恢复搜索内容和模式
       searchText.value = historyItem.searchContent
       matchMode.value = historyItem.matchMode
@@ -1211,9 +1254,22 @@ onMounted(async () => {
     // 如果从匹配历史跳转过来，从 sessionStorage 加载结果
     if (route.query.fromHistory === 'true') {
       try {
+        const currentUserId = userStore.userInfo?.id
         const sessionResults = sessionStorage.getItem('matchingResults')
         if (sessionResults) {
           const data = JSON.parse(sessionResults)
+          
+          // 检查用户ID是否匹配（如果sessionStorage中有用户ID）
+          if (data.userId !== undefined && data.userId !== null) {
+            if (currentUserId !== data.userId) {
+              // 用户不匹配，清除sessionStorage并返回
+              sessionStorage.removeItem('matchingResults')
+              showResults.value = false
+              ElMessage.warning('匹配结果不属于当前用户，请重新匹配')
+              return
+            }
+          }
+          
           const papers = data.papers || []
           
           if (papers.length > 0) {
@@ -1333,7 +1389,14 @@ watch(matchMode, (newMode, oldMode) => {
 // 保存匹配历史到 localStorage
 const saveMatchHistory = () => {
   try {
-    const historyKey = 'matchHistory'
+    const currentUserId = userStore.userInfo?.id
+    if (!currentUserId) {
+      // 如果没有用户ID，不保存历史
+      return
+    }
+    
+    // 使用用户ID作为key的一部分，确保每个用户有独立的历史记录
+    const historyKey = `matchHistory_${currentUserId}`
     let history = JSON.parse(localStorage.getItem(historyKey) || '[]')
     
     // 获取当前匹配的结果（使用真实数据）
@@ -1353,7 +1416,8 @@ const saveMatchHistory = () => {
       matchType: matchMode.value === 'enterprise' ? '找成果' : '找需求',
       matchCount: currentResults.length,
       results: currentResults, // 保存完整的匹配结果
-      matchMode: matchMode.value
+      matchMode: matchMode.value,
+      userId: currentUserId // 保存用户ID
     }
     
     // 添加到历史记录开头（最新的在前面）
@@ -1495,8 +1559,17 @@ const startMatch = async () => {
       showResults.value = false
       ElMessage.warning('未找到匹配结果，请尝试使用更具体、有意义的搜索内容')
       
-      // 清除匹配任务状态
-      localStorage.removeItem('smartMatchTaskState')
+      // 更新任务状态为失败，然后清除（让轮询能够检测到）
+      const failedTaskState = {
+        ...matchTaskState,
+        status: 'failed',
+        error: '未找到匹配结果'
+      }
+      localStorage.setItem('smartMatchTaskState', JSON.stringify(failedTaskState))
+      // 延迟清除，确保轮询能够检测到
+      setTimeout(() => {
+        localStorage.removeItem('smartMatchTaskState')
+      }, 1000)
       return
     }
     
@@ -1511,14 +1584,30 @@ const startMatch = async () => {
     const historyId = response.data.history_id
     if (historyId) {
       currentHistoryId.value = historyId  // 保存当前话题的历史ID
-      ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项，已保存到匹配历史`)
     } else {
       currentHistoryId.value = null
+    }
+    
+    // 更新任务状态为已完成，保存结果（让轮询能够检测到并恢复）
+    const completedTaskState = {
+      ...matchTaskState,
+      status: 'completed',
+      results: convertedResults,
+      historyId: historyId
+    }
+    localStorage.setItem('smartMatchTaskState', JSON.stringify(completedTaskState))
+    
+    // 显示成功消息
+    if (historyId) {
+      ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项，已保存到匹配历史`)
+    } else {
       ElMessage.success(`匹配完成！找到 ${convertedResults.length} 个匹配项`)
     }
     
-    // 清除匹配任务状态（匹配已完成，不需要保留状态）
-    localStorage.removeItem('smartMatchTaskState')
+    // 延迟清除任务状态（确保轮询能够检测到完成状态）
+    setTimeout(() => {
+      localStorage.removeItem('smartMatchTaskState')
+    }, 2000)
 
     // 滚动到结果区域
     setTimeout(() => {
@@ -1537,8 +1626,18 @@ const startMatch = async () => {
     loading.value = false
     showResults.value = false
     
-    // 清除匹配任务状态
-    localStorage.removeItem('smartMatchTaskState')
+    // 更新任务状态为失败，然后清除（让轮询能够检测到）
+    const failedTaskState = {
+      ...matchTaskState,
+      status: 'failed',
+      error: error.response?.data?.detail || error.message || '未知错误'
+    }
+    localStorage.setItem('smartMatchTaskState', JSON.stringify(failedTaskState))
+    
+    // 延迟清除，确保轮询能够检测到
+    setTimeout(() => {
+      localStorage.removeItem('smartMatchTaskState')
+    }, 1000)
     
     ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
     console.error('匹配失败:', error)
@@ -1759,7 +1858,8 @@ const viewProposal = (id) => {
     matchMode: matchMode.value,
     hasResults: showResults.value,
     results: matchResults.value, // 保存完整的匹配结果
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    userId: userStore.userInfo?.id || null // 保存当前用户ID
   }
   localStorage.setItem('smartMatchState', JSON.stringify(state))
   

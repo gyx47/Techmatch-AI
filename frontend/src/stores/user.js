@@ -22,8 +22,20 @@ export const useUserStore = defineStore('user', () => {
       // 获取用户信息
       await getUserInfo()
       
-      // 清除之前的匹配任务状态（新用户登录，不应该看到之前用户的任务状态）
+      // 清除之前用户的所有匹配相关状态（新用户登录，不应该看到之前用户的状态）
       localStorage.removeItem('smartMatchTaskState')
+      localStorage.removeItem('smartMatchState')
+      // 清除所有用户的匹配历史（使用通配符方式清除所有 matchHistory_* 的key）
+      const keysToRemove = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith('matchHistory_')) {
+          keysToRemove.push(key)
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key))
+      // 清除 sessionStorage 中的匹配结果
+      sessionStorage.removeItem('matchingResults')
       
       return response.data
     } catch (error) {
@@ -43,8 +55,20 @@ export const useUserStore = defineStore('user', () => {
       // 获取用户信息
       await getUserInfo()
       
-      // 清除之前的匹配任务状态（新用户注册，不应该看到之前用户的任务状态）
+      // 清除之前用户的所有匹配相关状态（新用户注册，不应该看到之前用户的状态）
       localStorage.removeItem('smartMatchTaskState')
+      localStorage.removeItem('smartMatchState')
+      // 清除所有用户的匹配历史（使用通配符方式清除所有 matchHistory_* 的key）
+      const keysToRemove = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith('matchHistory_')) {
+          keysToRemove.push(key)
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key))
+      // 清除 sessionStorage 中的匹配结果
+      sessionStorage.removeItem('matchingResults')
       
       return response.data
     } catch (error) {
@@ -71,8 +95,20 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
-    // 清除匹配任务状态（用户退出登录，不应该保留任务状态）
+    // 清除所有匹配相关状态（用户退出登录，不应该保留任何状态）
     localStorage.removeItem('smartMatchTaskState')
+    localStorage.removeItem('smartMatchState')
+    // 清除所有用户的匹配历史（使用通配符方式清除所有 matchHistory_* 的key）
+    const keysToRemove = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('matchHistory_')) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key))
+    // 清除 sessionStorage 中的匹配结果
+    sessionStorage.removeItem('matchingResults')
   }
 
   return {

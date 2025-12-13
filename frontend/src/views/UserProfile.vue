@@ -497,11 +497,13 @@ const handleRematch = async (row) => {
     }
     
     // 保存到 sessionStorage，供 SmartMatch 页面使用
+    const userStore = useUserStore()
     sessionStorage.setItem('matchingResults', JSON.stringify({
       papers: convertedResults,
       searchText: response.data.search_desc || row.searchContent,
       matchMode: response.data.match_mode || row.matchMode || 'enterprise',
-      historyId: response.data.history_id || row.id  // 保存历史ID
+      historyId: response.data.history_id || row.id,  // 保存历史ID
+      userId: userStore.userInfo?.id || null  // 保存当前用户ID
     }))
     
     // 跳转到智能匹配页面
