@@ -64,11 +64,23 @@
             <el-button 
               type="success" 
               size="large"
-              :loading="generatingPath"
-              @click="generateImplementationPath"
+              :loading="currentTask.status === 'generating' && !currentTask.taskId"
+              :disabled="loading || currentTask.status === 'generating'"
+              @click="startNewTask"
             >
               <el-icon><Document /></el-icon>
               生成实现路径 (已选 {{ selectedPapers.length }} 篇)
+            </el-button>
+            <!-- 只在生成中时显示查看进度按钮 -->
+            <el-button 
+              v-if="currentTask.status === 'generating'"
+              type="primary" 
+              size="large"
+              :disabled="loading"
+              @click="viewCurrentTask"
+            >
+              <el-icon><View /></el-icon>
+              查看生成进度
             </el-button>
             <el-button @click="clearSelection" size="large">
               清空选择
@@ -126,7 +138,6 @@
                       :percentage="item.matchScore"
                       :color="getScoreColor(item.matchScore)"
                       :stroke-width="8"
-                      :status="item.matchScore >= 90 ? 'success' : item.matchScore >= 75 ? 'warning' : ''"
                       :show-text="true"
                       :format="(percentage) => `${percentage}%`"
                     />
@@ -181,36 +192,358 @@
     <!-- 实现路径对话框 -->
     <el-dialog
       v-model="showPathDialog"
-      title="科研成果实现路径"
+      :title="dialogMode === 'generating' ? '生成实现路径中...' : dialogMode === 'result' ? '实现路径生成结果' : dialogMode === 'history' ? '历史实现路径方案' : '科研成果实现路径'"
       width="80%"
-      :close-on-click-modal="false"
+      :close-on-click-modal="true"
+      :close-on-press-escape="true"
       class="implementation-path-dialog"
+      @close="handlePathDialogClose"
     >
-      <!-- 实时进度：仅在任务运行中显示 -->
-      <div class="path-section" v-if="pathProgress && pathProgress.status === 'running'">
-        <h3>⏱ 当前进度</h3>
+      <!-- 实时进度：仅在任务运行中显示，且不是查看历史方案时 -->
+      <div class="path-section" v-if="dialogMode === 'generating' && currentTask.progress && currentTask.progress.status === 'running'">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h3 style="margin: 0;">⏱ 当前进度</h3>
+          <el-button 
+            type="danger" 
+            size="small"
+            @click="cancelImplementationPath"
+            :loading="cancellingPath"
+          >
+            <el-icon><Close /></el-icon>
+            取消生成
+          </el-button>
+        </div>
         <p>
           <strong>状态：</strong>
-          <span v-if="pathProgress.status === 'running'">生成中...</span>
-          <span v-else-if="pathProgress.status === 'finished'">已完成</span>
-          <span v-else-if="pathProgress.status === 'error'">出错</span>
+          <span v-if="currentTask.progress.status === 'running'">生成中...</span>
+          <span v-else-if="currentTask.progress.status === 'finished'">已完成</span>
+          <span v-else-if="currentTask.progress.status === 'error'">出错</span>
+          <span v-else-if="currentTask.progress.status === 'cancelled'">已取消</span>
           <span v-else>未知</span>
         </p>
-        <p v-if="pathProgress.current_step">
-          <strong>当前步骤：</strong>{{ pathProgress.current_step }}
+        <p v-if="currentTask.progress.current_step">
+          <strong>当前步骤：</strong>{{ currentTask.progress.current_step }}
         </p>
         <el-progress
-          v-if="pathProgress.total_papers"
-          :percentage="Math.round((pathProgress.completed_papers / pathProgress.total_papers) * 100)"
+          v-if="currentTask.progress.total_papers"
+          :percentage="Math.round((currentTask.progress.completed_papers / currentTask.progress.total_papers) * 100)"
           :stroke-width="8"
           style="max-width: 400px; margin-top: 8px"
         />
       </div>
 
-      <div v-if="pathLoading" class="path-loading">
+      <div v-if="dialogMode === 'generating' && currentTask.status === 'generating' && !currentTask.progress" class="path-loading">
         <el-skeleton :rows="10" animated />
       </div>
-      <div v-else-if="implementationPath" class="path-content">
+      <!-- 查看历史方案 -->
+      <div v-else-if="dialogMode === 'history' && viewingHistoryItem" class="path-content">
+        <!-- 耗时总览 -->
+        <div class="path-section" v-if="viewingHistoryItem.timings">
+          <h3>⏱ 性能概览</h3>
+          <p v-if="viewingHistoryItem.timings.total_ms">
+            <strong>总耗时：</strong>{{ (viewingHistoryItem.timings.total_ms / 1000).toFixed(2) }} 秒
+          </p>
+          <p v-if="viewingHistoryItem.timings.implementation_path_ms">
+            <strong>实现路径汇总耗时：</strong>{{ (viewingHistoryItem.timings.implementation_path_ms / 1000).toFixed(2) }} 秒
+          </p>
+          <div v-if="viewingHistoryItem.timings.per_paper && viewingHistoryItem.timings.per_paper.length" style="margin-top: 10px">
+            <strong>单篇论文耗时：</strong>
+            <el-table
+              :data="viewingHistoryItem.timings.per_paper"
+              size="small"
+              style="width: 100%; margin-top: 8px"
+            >
+              <el-table-column prop="title" label="论文" min-width="220" />
+              <el-table-column
+                label="PDF解析 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.pdf_ms ?? '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="LLM精读 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.llm_ms ?? '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="合计 (ms)"
+                min-width="120"
+              >
+                <template #default="scope">
+                  {{ scope.row.timings?.total_ms ?? '-' }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+
+        <!-- 架构决策 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.architectural_decision">
+          <h3>🧠 架构决策</h3>
+          <p v-if="viewingHistoryItem.implementation_path.architectural_decision.selected_methodology">
+            <strong>选定方法：</strong>
+            {{ viewingHistoryItem.implementation_path.architectural_decision.selected_methodology }}
+          </p>
+          <p v-if="viewingHistoryItem.implementation_path.architectural_decision.tradeoff_reasoning">
+            <strong>权衡分析：</strong>
+            {{ viewingHistoryItem.implementation_path.architectural_decision.tradeoff_reasoning }}
+          </p>
+          <p v-else-if="viewingHistoryItem.implementation_path.architectural_decision.reasoning">
+            <strong>决策说明：</strong>
+            {{ viewingHistoryItem.implementation_path.architectural_decision.reasoning }}
+          </p>
+          <p v-if="viewingHistoryItem.implementation_path.architectural_decision.discarded_methodologies">
+            <strong>未采用方案：</strong>
+            {{ viewingHistoryItem.implementation_path.architectural_decision.discarded_methodologies }}
+          </p>
+        </div>
+
+        <!-- 整体概述 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.overview">
+          <h3>📋 整体概述</h3>
+          <p style="white-space: pre-line">{{ viewingHistoryItem.implementation_path.overview }}</p>
+        </div>
+
+        <!-- 技术选型 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.technology_selection">
+          <h3>🔧 技术选型</h3>
+          <div class="tech-selection">
+            <div v-if="viewingHistoryItem.implementation_path.technology_selection.primary_techniques">
+              <strong>主要技术栈：</strong>
+              <el-tag 
+                v-for="tech in viewingHistoryItem.implementation_path.technology_selection.primary_techniques" 
+                :key="tech"
+                type="success"
+                style="margin: 5px"
+              >
+                {{ tech }}
+              </el-tag>
+            </div>
+            <p v-if="viewingHistoryItem.implementation_path.technology_selection.integration_strategy" style="margin-top: 10px">
+              <strong>核心方案：</strong>{{ viewingHistoryItem.implementation_path.technology_selection.integration_strategy }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 实施阶段 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.implementation_phases">
+          <h3>📅 实施阶段</h3>
+          <el-timeline>
+            <el-timeline-item
+              v-for="phase in viewingHistoryItem.implementation_path.implementation_phases"
+              :key="phase.phase"
+              :timestamp="phase.estimated_time"
+              placement="top"
+            >
+              <el-card>
+                <h4>{{ phase.name }}</h4>
+                <div v-if="phase.requirement_alignment" style="margin-bottom: 15px; padding: 10px; background: #e6f7ff; border-left: 3px solid #1890ff; border-radius: 4px">
+                  <strong>🎯 需求对齐：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.requirement_alignment }}</p>
+                </div>
+                <div v-if="phase.user_value" style="margin-bottom: 15px; padding: 10px; background: #f6ffed; border-left: 3px solid #52c41a; border-radius: 4px">
+                  <strong>💎 用户价值：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.user_value }}</p>
+                </div>
+                <div v-if="phase.objectives && phase.objectives.length" class="phase-objectives">
+                  <div class="phase-section-title">🎯 目标</div>
+                  <div class="phase-objectives-tags">
+                    <el-tag
+                      v-for="(obj, idx) in phase.objectives"
+                      :key="obj + idx"
+                      effect="light"
+                      type="info"
+                      class="phase-pill-tag"
+                    >
+                      {{ idx + 1 }}. {{ obj }}
+                    </el-tag>
+                  </div>
+                </div>
+                <div v-if="phase.deliverables" style="margin-top: 10px">
+                  <strong>交付物：</strong>
+                  <ul>
+                    <li v-for="del in phase.deliverables" :key="del">{{ del }}</li>
+                  </ul>
+                </div>
+                <div v-if="phase.key_tasks && phase.key_tasks.length" class="phase-key-tasks">
+                  <div class="phase-section-title">🛠 关键任务</div>
+                  <ul class="phase-task-list">
+                    <li
+                      v-for="(task, idx) in phase.key_tasks"
+                      :key="task + idx"
+                      class="phase-task-item"
+                    >
+                      <span class="phase-task-index">{{ idx + 1 }}</span>
+                      <span class="phase-task-text">{{ task }}</span>
+                    </li>
+                  </ul>
+                </div>
+                <div v-if="phase.definition_of_done" style="margin-top: 15px; padding: 10px; background: #fff7e6; border-left: 3px solid #faad14; border-radius: 4px">
+                  <strong>✅ 验收标准：</strong>
+                  <p style="margin: 5px 0 0 0">{{ phase.definition_of_done }}</p>
+                </div>
+              </el-card>
+            </el-timeline-item>
+          </el-timeline>
+        </div>
+
+        <!-- 风险评估 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.risk_assessment">
+          <h3>⚠️ 风险评估</h3>
+          <div class="risk-assessment">
+            <div v-if="viewingHistoryItem.implementation_path.risk_assessment.technical_risks">
+              <strong>技术风险：</strong>
+              <ul>
+                <li v-for="risk in viewingHistoryItem.implementation_path.risk_assessment.technical_risks" :key="risk">{{ risk }}</li>
+              </ul>
+            </div>
+            <div v-if="viewingHistoryItem.implementation_path.risk_assessment.mitigation_strategies" style="margin-top: 10px">
+              <strong>应对策略：</strong>
+              <ul>
+                <li v-for="strategy in viewingHistoryItem.implementation_path.risk_assessment.mitigation_strategies" :key="strategy">{{ strategy }}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- 成功标准 -->
+        <div class="path-section" v-if="viewingHistoryItem.implementation_path?.success_criteria">
+          <h3>✅ 成功标准</h3>
+          <ul>
+            <li v-for="criteria in viewingHistoryItem.implementation_path.success_criteria" :key="criteria">{{ criteria }}</li>
+          </ul>
+        </div>
+
+        <!-- 论文分析详情 -->
+        <div class="path-section" v-if="viewingHistoryItem.papers_analysis && viewingHistoryItem.papers_analysis.length > 0">
+          <h3>📄 论文分析详情</h3>
+          <el-collapse>
+            <el-collapse-item
+              v-for="(paper, index) in viewingHistoryItem.papers_analysis"
+              :key="index"
+              :title="paper.title"
+            >
+              <div v-if="paper.status === 'success' && paper.analysis">
+                <template v-if="paper.analysis.analysis">
+                  <div class="paper-analysis-content">
+                    <el-tag v-if="paper.analysis.paper_type" type="info" style="margin-bottom: 15px">
+                      论文类型：{{ paper.analysis.paper_type }}
+                    </el-tag>
+                    <div v-if="paper.analysis.analysis.big_idea" class="analysis-item">
+                      <h4>💡 核心创新点</h4>
+                      <p>{{ paper.analysis.analysis.big_idea }}</p>
+                    </div>
+                    <div v-if="paper.analysis.analysis.engineering_analysis" class="analysis-item">
+                      <h4>🔧 工程分析</h4>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.model_architecture">
+                        <strong>模型架构：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.model_architecture }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.input_spec" style="margin-top: 10px">
+                        <strong>输入规格：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.input_spec }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.output_spec" style="margin-top: 10px">
+                        <strong>输出规格：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.output_spec }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.loss_function" style="margin-top: 10px">
+                        <strong>损失函数：</strong>
+                        <p>{{ paper.analysis.analysis.engineering_analysis.loss_function }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.engineering_analysis.key_hyperparameters && paper.analysis.analysis.engineering_analysis.key_hyperparameters.length > 0" style="margin-top: 10px">
+                        <strong>关键超参数：</strong>
+                        <el-tag 
+                          v-for="(param, idx) in paper.analysis.analysis.engineering_analysis.key_hyperparameters" 
+                          :key="idx"
+                          style="margin: 3px"
+                        >
+                          {{ param }}
+                        </el-tag>
+                      </div>
+                    </div>
+                    <div v-if="paper.analysis.analysis.training_procedure" class="analysis-item">
+                      <h4>📚 训练流程</h4>
+                      <div v-if="paper.analysis.analysis.training_procedure.data_processing">
+                        <strong>数据处理：</strong>
+                        <p>{{ paper.analysis.analysis.training_procedure.data_processing }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.training_procedure.optimization" style="margin-top: 10px">
+                        <strong>优化策略：</strong>
+                        <p>{{ paper.analysis.analysis.training_procedure.optimization }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.training_procedure.regularization_tricks && paper.analysis.analysis.training_procedure.regularization_tricks.length > 0" style="margin-top: 10px">
+                        <strong>正则化技巧：</strong>
+                        <ul>
+                          <li v-for="(trick, idx) in paper.analysis.analysis.training_procedure.regularization_tricks" :key="idx">
+                            {{ trick }}
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div v-if="paper.analysis.analysis.inference_strategy" class="analysis-item">
+                      <h4>⚡ 推理策略</h4>
+                      <div v-if="paper.analysis.analysis.inference_strategy.sampling_method">
+                        <strong>采样方法：</strong>
+                        <p>{{ paper.analysis.analysis.inference_strategy.sampling_method }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.inference_strategy.latency_estimation" style="margin-top: 10px">
+                        <strong>延迟估算：</strong>
+                        <p>{{ paper.analysis.analysis.inference_strategy.latency_estimation }}</p>
+                      </div>
+                    </div>
+                    <div v-if="paper.analysis.analysis.reproducibility" class="analysis-item">
+                      <h4>🔬 可复现性</h4>
+                      <div v-if="paper.analysis.analysis.reproducibility.implementation_gap">
+                        <strong>实现难点：</strong>
+                        <p>{{ paper.analysis.analysis.reproducibility.implementation_gap }}</p>
+                      </div>
+                      <div v-if="paper.analysis.analysis.reproducibility.reproducibility_score" style="margin-top: 10px">
+                        <strong>可复现性评分：</strong>
+                        <el-rate 
+                          :model-value="parseInt(paper.analysis.analysis.reproducibility.reproducibility_score)" 
+                          disabled 
+                          show-score
+                          text-color="#ff9900"
+                          score-template="{value}"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div v-if="paper.analysis.core_techniques">
+                    <strong>核心技术：</strong>
+                    <el-tag 
+                      v-for="tech in paper.analysis.core_techniques" 
+                      :key="tech"
+                      style="margin: 3px"
+                    >
+                      {{ tech }}
+                    </el-tag>
+                  </div>
+                  <p v-if="paper.analysis.summary" style="margin-top: 10px">
+                    <strong>总结：</strong>{{ paper.analysis.summary }}
+                  </p>
+                  <p v-if="paper.analysis.key_implementation_details" style="margin-top: 10px">
+                    <strong>实现细节：</strong>{{ paper.analysis.key_implementation_details }}
+                  </p>
+                </template>
+              </div>
+              <div v-else>
+                <el-alert :title="paper.error_message || '分析失败'" type="error" />
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+      </div>
+      <!-- 查看当前任务结果 -->
+      <div v-else-if="dialogMode === 'result' && currentTask.result" class="path-content">
         <!-- 耗时总览 -->
         <div class="path-section" v-if="pathTimings">
           <h3>⏱ 性能概览</h3>
@@ -715,7 +1048,8 @@
       </div>
       <template #footer>
         <el-button @click="showPathDialog = false">关闭</el-button>
-        <el-button type="primary" @click="exportPath">导出路径</el-button>
+        <!-- 历史方案模式下不显示导出按钮 -->
+        <el-button v-if="dialogMode !== 'history'" type="primary" @click="exportPath">导出路径</el-button>
       </template>
     </el-dialog>
 
@@ -868,7 +1202,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import { Search, FolderOpened, OfficeBuilding, User, Document, Opportunity, Calendar, Clock } from '@element-plus/icons-vue'
+import { Search, FolderOpened, OfficeBuilding, User, Document, Opportunity, Calendar, Clock, Close, View } from '@element-plus/icons-vue'
 import api from '../api'
 
 const router = useRouter()
@@ -890,16 +1224,37 @@ const selectedPapers = computed(() => {
     item.type === '论文' && item.paper_id && selectedPaperIds.value.includes(item.paper_id)
   )
 })
-const generatingPath = ref(false)
+// 当前任务状态管理（独立管理）
+const currentTask = ref({
+  taskId: null,
+  status: 'idle', // 'idle' | 'generating' | 'completed' | 'error' | 'cancelled'
+  selectedPaperIds: [], // 记录本次任务选择的论文ID列表
+  progress: null,
+  result: null,
+  error: null,
+  createdAt: null
+})
+
+// 对话框模式：控制显示内容
+const dialogMode = ref('idle') // 'idle' | 'generating' | 'result' | 'history'
 const showPathDialog = ref(false)
-const pathLoading = ref(false)
-const pathError = ref(null)
-const implementationPath = ref(null)
-const papersAnalysis = ref([])
-const pathTimings = ref(null)
-const pathTaskId = ref(null)
-const pathProgress = ref(null)
+
+// 历史方案显示数据（独立于当前任务）
+const viewingHistoryItem = ref(null)
+
+// 轮询定时器
 let pathProgressTimer = null
+const cancellingPath = ref(false)
+
+// 兼容旧代码的 computed 属性（逐步迁移）
+const pathTaskId = computed(() => currentTask.value.taskId)
+const pathLoading = computed(() => currentTask.value.status === 'generating')
+const pathError = computed(() => currentTask.value.error)
+const implementationPath = computed(() => currentTask.value.result?.implementation_path || null)
+const papersAnalysis = computed(() => currentTask.value.result?.papers_analysis || currentTask.value.progress?.papers_analysis || [])
+const pathTimings = computed(() => currentTask.value.result?.timings || null)
+const pathProgress = computed(() => currentTask.value.progress)
+const generatingPath = computed(() => currentTask.value.status === 'generating')
 
 // 历史方案相关（当前话题）
 const showHistoryDialog = ref(false)
@@ -1021,7 +1376,415 @@ const clearMatchState = () => {
   localStorage.removeItem('smartMatchState')
 }
 
-// 从匹配历史恢复结果
+// ==================== 实现路径任务管理 ====================
+
+// 清理当前任务状态
+const clearCurrentTask = () => {
+  if (pathProgressTimer) {
+    clearInterval(pathProgressTimer)
+    pathProgressTimer = null
+  }
+  currentTask.value = {
+    taskId: null,
+    status: 'idle',
+    selectedPaperIds: [],
+    progress: null,
+    result: null,
+    error: null,
+    createdAt: null
+  }
+  dialogMode.value = 'idle'
+}
+
+// 检查选择的论文是否与当前任务相同
+const isSamePaperSelection = (paperIds) => {
+  if (!currentTask.value.selectedPaperIds || currentTask.value.selectedPaperIds.length === 0) {
+    return false
+  }
+  if (paperIds.length !== currentTask.value.selectedPaperIds.length) {
+    return false
+  }
+  const sortedCurrent = [...currentTask.value.selectedPaperIds].sort()
+  const sortedNew = [...paperIds].sort()
+  return JSON.stringify(sortedCurrent) === JSON.stringify(sortedNew)
+}
+
+// 开始新任务
+const startNewTask = async () => {
+  if (selectedPaperIds.value.length === 0) {
+    ElMessage.warning('请至少选择一篇论文')
+    return
+  }
+  
+  if (selectedPaperIds.value.length > 5) {
+    ElMessage.warning('最多只能选择5篇论文')
+    return
+  }
+  
+  // 检查是否有正在生成的任务
+  if (currentTask.value.status === 'generating') {
+    ElMessage.warning('已有任务正在生成，请先取消或等待完成')
+    return
+  }
+  
+  // 检查是否选择了相同的论文
+  if (isSamePaperSelection(selectedPaperIds.value)) {
+    if (currentTask.value.status === 'completed') {
+      ElMessage.info('已为这些论文生成过实现路径，请点击"查看生成结果"查看')
+      return
+    }
+    if (currentTask.value.status === 'error') {
+      ElMessage.info('这些论文的生成任务已失败，请点击"查看任务状态"查看详情')
+      return
+    }
+  }
+  
+  // 清理旧任务状态（如果选择了不同的论文）
+  if (currentTask.value.taskId && !isSamePaperSelection(selectedPaperIds.value)) {
+    clearCurrentTask()
+  }
+  
+  // 初始化新任务
+  currentTask.value = {
+    taskId: Date.now().toString(),
+    status: 'generating',
+    selectedPaperIds: [...selectedPaperIds.value],
+    progress: null,
+    result: null,
+    error: null,
+    createdAt: Date.now()
+  }
+  
+  dialogMode.value = 'generating'
+  showPathDialog.value = true
+  
+  // 启动任务
+  try {
+    const requestData = {
+      paper_ids: selectedPaperIds.value,
+      max_pages_per_paper: 20,
+      task_id: currentTask.value.taskId
+    }
+    
+    // 如果有历史ID，使用历史ID获取需求；否则使用当前搜索文本
+    if (currentHistoryId.value) {
+      requestData.history_id = currentHistoryId.value
+    } else {
+      requestData.user_requirement = searchText.value
+    }
+    
+    // 启动进度轮询
+    const pollProgress = async () => {
+      if (!currentTask.value.taskId) return
+      try {
+        const res = await api.get(`/papers/implementation-progress/${currentTask.value.taskId}`)
+        currentTask.value.progress = res.data
+        
+        // 检查任务是否被取消
+        if (res.data.status === 'cancelled') {
+          currentTask.value.status = 'cancelled'
+          currentTask.value.error = '任务已取消'
+          if (pathProgressTimer) {
+            clearInterval(pathProgressTimer)
+            pathProgressTimer = null
+          }
+          ElMessage.warning('任务已取消')
+          return
+        }
+        
+        // 检查任务是否完成
+        if (res.data && res.data.result && (res.data.status === 'finished' || res.data.status === 'error')) {
+          const result = res.data.result
+          if (result.status === 'error') {
+            currentTask.value.status = 'error'
+            currentTask.value.error = result.error_message || '生成实现路径失败'
+            ElMessage.error(currentTask.value.error)
+          } else {
+            currentTask.value.status = 'completed'
+            currentTask.value.result = {
+              implementation_path: result.implementation_path,
+              papers_analysis: result.papers_analysis || res.data.papers_analysis || [],
+              timings: result.timings || null
+            }
+            dialogMode.value = 'result'
+            // 如果对话框未打开，自动打开显示结果
+            if (!showPathDialog.value) {
+              showPathDialog.value = true
+            }
+            ElMessage.success('实现路径生成成功！')
+          }
+          if (pathProgressTimer) {
+            clearInterval(pathProgressTimer)
+            pathProgressTimer = null
+          }
+          return
+        }
+        
+        // 如果进度中包含 papers_analysis，更新显示
+        if (res.data.papers_analysis && res.data.papers_analysis.length > 0) {
+          // papers_analysis 已经在 progress 中，computed 会自动更新
+        }
+      } catch (e) {
+        console.error('获取实现路径进度失败:', e)
+      }
+    }
+    
+    await pollProgress()
+    pathProgressTimer = setInterval(pollProgress, 1000)
+    
+    // 发送生成请求
+    const response = await api.post('/papers/generate-implementation-path', requestData)
+    
+    if (response.data.status === 'error') {
+      currentTask.value.status = 'error'
+      currentTask.value.error = response.data.error_message || '生成实现路径失败'
+      ElMessage.error(currentTask.value.error)
+      if (pathProgressTimer) {
+        clearInterval(pathProgressTimer)
+        pathProgressTimer = null
+      }
+    }
+    
+    // 等待结果（轮询已经在运行）
+    const waitForResult = async () => {
+      const maxWaitMs = 30 * 60 * 1000 // 最长等待 30 分钟
+      const intervalMs = 1000
+      let waited = 0
+      
+      while (waited <= maxWaitMs) {
+        const progress = currentTask.value.progress
+        
+        // 检查任务是否被取消
+        if (progress && progress.status === 'cancelled') {
+          currentTask.value.status = 'cancelled'
+          currentTask.value.error = '任务已取消'
+          if (pathProgressTimer) {
+            clearInterval(pathProgressTimer)
+            pathProgressTimer = null
+          }
+          ElMessage.warning('任务已取消')
+          return
+        }
+        
+        // 检查任务是否完成
+        if (progress && progress.result && (progress.status === 'finished' || progress.status === 'error')) {
+          const result = progress.result
+          if (result.status === 'error') {
+            currentTask.value.status = 'error'
+            currentTask.value.error = result.error_message || '生成实现路径失败'
+            ElMessage.error(currentTask.value.error)
+          } else {
+            currentTask.value.status = 'completed'
+            currentTask.value.result = {
+              implementation_path: result.implementation_path,
+              papers_analysis: result.papers_analysis || progress.papers_analysis || [],
+              timings: result.timings || null
+            }
+            dialogMode.value = 'result'
+            ElMessage.success('实现路径生成成功！')
+          }
+          return
+        }
+        
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+        waited += intervalMs
+      }
+      
+      // 超时兜底
+      if (!currentTask.value.result) {
+        currentTask.value.error = '生成实现路径超时，请稍后在对话框中重新点击生成或刷新页面后重试'
+        ElMessage.error(currentTask.value.error)
+      }
+    }
+    
+    await waitForResult()
+  } catch (error) {
+    currentTask.value.status = 'error'
+    currentTask.value.error = error.response?.data?.detail || error.message || '生成实现路径失败'
+    ElMessage.error(currentTask.value.error)
+    console.error('生成实现路径失败:', error)
+    if (pathProgressTimer) {
+      clearInterval(pathProgressTimer)
+      pathProgressTimer = null
+    }
+  }
+}
+
+// 查看当前任务
+const viewCurrentTask = () => {
+  if (currentTask.value.status === 'idle') {
+    ElMessage.warning('暂无任务')
+    return
+  }
+  
+  // 根据任务状态设置对话框模式
+  if (currentTask.value.status === 'generating') {
+    dialogMode.value = 'generating'
+    // 恢复轮询
+    if (!pathProgressTimer && currentTask.value.taskId) {
+      const pollProgress = async () => {
+        if (!currentTask.value.taskId) return
+        try {
+          const res = await api.get(`/papers/implementation-progress/${currentTask.value.taskId}`)
+          currentTask.value.progress = res.data
+          
+          // 检查任务是否被取消
+          if (res.data.status === 'cancelled') {
+            currentTask.value.status = 'cancelled'
+            currentTask.value.error = '任务已取消'
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            ElMessage.warning('任务已取消')
+            return
+          }
+          
+          // 检查任务是否完成
+          if (res.data && res.data.result && (res.data.status === 'finished' || res.data.status === 'error')) {
+            const result = res.data.result
+            if (result.status === 'error') {
+              currentTask.value.status = 'error'
+              currentTask.value.error = result.error_message || '生成实现路径失败'
+              ElMessage.error(currentTask.value.error)
+            } else {
+              currentTask.value.status = 'completed'
+              currentTask.value.result = {
+                implementation_path: result.implementation_path,
+                papers_analysis: result.papers_analysis || res.data.papers_analysis || [],
+                timings: result.timings || null
+              }
+              dialogMode.value = 'result'
+              // 如果对话框未打开，自动打开显示结果
+              if (!showPathDialog.value) {
+                showPathDialog.value = true
+              }
+              ElMessage.success('实现路径生成成功！')
+            }
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            return
+          }
+          
+          // 如果进度中包含 papers_analysis，更新显示
+          if (res.data.papers_analysis && res.data.papers_analysis.length > 0) {
+            // papers_analysis 已经在 progress 中
+          }
+        } catch (e) {
+          console.error('获取实现路径进度失败:', e)
+        }
+      }
+      pollProgress()
+      pathProgressTimer = setInterval(pollProgress, 1000)
+    }
+  } else if (currentTask.value.status === 'completed' || currentTask.value.status === 'error') {
+    dialogMode.value = 'result'
+  }
+  
+  // 只有在用户主动点击查看时才打开对话框
+  // 如果对话框已经关闭（比如刚关闭了历史方案），不要自动打开
+  showPathDialog.value = true
+}
+
+// 将后端返回的匹配结果转换为前端格式
+const convertBackendMatchResults = (papers) => {
+  return papers.map((paper, index) => {
+    const score = paper.score || 0
+    const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
+    
+    // 根据item_type判断是论文还是成果
+    const itemType = paper.item_type || (paper.paper_id && paper.paper_id.startsWith('achievement_') ? 'achievement' : 'paper')
+    
+    if (itemType === 'achievement') {
+      // 成果格式
+      return {
+        id: `achievement_${paper.achievement_id || paper.paper_id?.replace('achievement_', '')}`,
+        achievement_id: paper.achievement_id || parseInt(paper.paper_id?.replace('achievement_', '') || '0'),
+        title: paper.name || paper.title || '无标题',
+        summary: paper.description || paper.abstract || '暂无描述',
+        application: paper.application || '',
+        matchScore: matchScore,
+        type: '成果',
+        field: paper.field || paper.categories || '未分类',
+        keywords: [],
+        paper_id: null,
+        pdf_url: null,
+        authors: '',
+        published_date: '',
+        reason: paper.reason || '',
+        match_type: paper.match_type || '',
+        vector_score: paper.vector_score || 0,
+        contact_name: paper.contact_name || '',
+        contact_phone: paper.contact_phone || '',
+        contact_email: paper.contact_email || '',
+        cooperation_mode: paper.cooperation_mode || []
+      }
+    } else {
+      // 论文格式
+      return {
+        id: paper.paper_id || `paper_${index}`,
+        title: paper.title || '无标题',
+        summary: paper.abstract || '暂无摘要',
+        matchScore: matchScore,
+        type: '论文',
+        field: paper.categories || '未分类',
+        keywords: paper.categories ? paper.categories.split(',') : [],
+        paper_id: paper.paper_id,
+        pdf_url: paper.pdf_url,
+        authors: paper.authors || '',
+        published_date: paper.published_date || '',
+        reason: paper.reason || '',
+        match_type: paper.match_type || '',
+        vector_score: paper.vector_score || 0
+      }
+    }
+  })
+}
+
+// 从后端数据库恢复匹配结果
+const restoreFromBackendHistory = async (historyId) => {
+  try {
+    const response = await api.get(`/matching/history/${historyId}/results`)
+    
+    if (response.data && response.data.papers && response.data.papers.length > 0) {
+      const convertedResults = convertBackendMatchResults(response.data.papers)
+      
+      // 恢复搜索内容和模式
+      searchText.value = route.query.q || response.data.search_desc || ''
+      matchMode.value = route.query.type || response.data.match_mode || 'enterprise'
+      
+      // 恢复匹配结果
+      matchResults.value = convertedResults
+      showResults.value = true
+      currentMatchMode.value = matchMode.value
+      cleanSelectedPaperIds()
+      
+      // 恢复历史ID
+      if (response.data.history_id) {
+        currentHistoryId.value = response.data.history_id
+      } else if (historyId) {
+        currentHistoryId.value = parseInt(historyId)
+      }
+      
+      // 滚动到结果区域
+      setTimeout(() => {
+        const resultsSection = document.querySelector('.results-section')
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 100)
+      return true
+    }
+    return false
+  } catch (e) {
+    console.error('从后端恢复匹配结果失败:', e)
+    return false
+  }
+}
+
+// 从匹配历史恢复结果（从 localStorage）
 const restoreFromHistory = (historyId) => {
   try {
     const currentUserId = userStore.userInfo?.id
@@ -1299,26 +2062,60 @@ onMounted(async () => {
                 resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
               }
             }, 100)
+            return // 已处理，直接返回
           } else {
             showResults.value = false
             ElMessage.warning('匹配结果数据为空，请重新匹配')
+            return
           }
         } else {
+          // sessionStorage 中没有数据，可能是刷新页面，尝试从后端数据库恢复
+          if (route.query.historyId) {
+            const restored = await restoreFromBackendHistory(route.query.historyId)
+            if (restored) {
+              return // 已恢复，直接返回
+            }
+            // 如果后端恢复失败，尝试从 localStorage 恢复
+            const restoredFromLocal = restoreFromHistory(route.query.historyId)
+            if (restoredFromLocal) {
+              return // 已恢复，直接返回
+            }
+          }
+          // 如果既没有 sessionStorage 也没有 historyId，静默处理（不弹出警告，可能是刷新页面）
           showResults.value = false
-          ElMessage.warning('未找到匹配结果数据，请重新匹配')
+          // 不弹出警告，因为可能是刷新页面导致的
+          return
         }
       } catch (e) {
         console.error('从匹配历史恢复失败:', e)
         showResults.value = false
-        ElMessage.error('恢复匹配结果失败: ' + e.message)
+        // 尝试从后端数据库恢复
+        if (route.query.historyId) {
+          const restored = await restoreFromBackendHistory(route.query.historyId)
+          if (restored) {
+            return
+          }
+          // 如果后端恢复失败，尝试从 localStorage 恢复
+          const restoredFromLocal = restoreFromHistory(route.query.historyId)
+          if (restoredFromLocal) {
+            return
+          }
+        }
+        // 静默处理错误，不弹出警告（可能是刷新页面导致的）
       }
       return // 已处理历史记录恢复，直接返回
     }
     
     // 如果从匹配历史跳转过来，恢复历史记录（通过 historyId）
     if (route.query.historyId) {
-      const restoredFromHistory = restoreFromHistory(route.query.historyId)
-      if (restoredFromHistory) {
+      // 优先从后端数据库恢复（刷新后 sessionStorage 已清除）
+      const restored = await restoreFromBackendHistory(route.query.historyId)
+      if (restored) {
+        return // 已恢复，直接返回
+      }
+      // 如果后端恢复失败，尝试从 localStorage 恢复
+      const restoredFromLocal = restoreFromHistory(route.query.historyId)
+      if (restoredFromLocal) {
         return // 已恢复，直接返回
       }
     }
@@ -1354,6 +2151,20 @@ onUnmounted(() => {
   if (matchTaskPollTimer) {
     clearInterval(matchTaskPollTimer)
     matchTaskPollTimer = null
+  }
+  
+  // 清理实现路径生成的轮询和取消任务
+  if (pathProgressTimer) {
+    clearInterval(pathProgressTimer)
+    pathProgressTimer = null
+  }
+  
+  // 如果正在生成实现路径，尝试取消
+  if (pathLoading.value && pathTaskId.value) {
+    // 异步取消，不等待结果
+    api.post(`/papers/cancel-implementation-path/${pathTaskId.value}`).catch(() => {
+      // 忽略错误，因为组件已经卸载
+    })
   }
 })
 
@@ -1706,8 +2517,14 @@ const cleanSelectedPaperIds = () => {
   selectedPaperIds.value = selectedPaperIds.value.filter(id => id != null && id !== undefined && id !== '')
 }
 
-// 生成实现路径
+// 旧的生成实现路径函数（已废弃，使用 startNewTask 代替）
+// 保留此函数以避免破坏其他地方的引用，但实际调用 startNewTask
 const generateImplementationPath = async () => {
+  return startNewTask()
+}
+
+// 旧的生成实现路径函数（已废弃，保留用于兼容）
+const _old_generateImplementationPath = async () => {
   if (selectedPaperIds.value.length === 0) {
     ElMessage.warning('请至少选择一篇论文')
     return
@@ -1718,6 +2535,66 @@ const generateImplementationPath = async () => {
     return
   }
   
+  // 如果已经有任务在运行，直接打开对话框并恢复轮询
+  if (pathTaskId.value && pathLoading.value) {
+    showPathDialog.value = true
+    // 恢复轮询
+    if (!pathProgressTimer) {
+      const pollProgress = async () => {
+        if (!pathTaskId.value) return
+        try {
+          const res = await api.get(`/papers/implementation-progress/${pathTaskId.value}`)
+          pathProgress.value = res.data
+          
+          // 检查任务是否被取消
+          if (res.data.status === 'cancelled') {
+            pathLoading.value = false
+            generatingPath.value = false
+            pathError.value = '任务已取消'
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            ElMessage.warning('任务已取消')
+            return
+          }
+          
+          // 检查任务是否完成
+          if (res.data && res.data.result && (res.data.status === 'finished' || res.data.status === 'error')) {
+            const result = res.data.result
+            if (result.status === 'error') {
+              pathError.value = result.error_message || '生成实现路径失败'
+              ElMessage.error(pathError.value)
+            } else {
+              implementationPath.value = result.implementation_path
+              papersAnalysis.value = result.papers_analysis || res.data.papers_analysis || []
+              pathTimings.value = result.timings || null
+              pathLoading.value = false
+              generatingPath.value = false
+              ElMessage.success('实现路径生成成功！')
+            }
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            return
+          }
+          
+          // 如果进度中包含 papers_analysis，更新前端显示
+          if (res.data.papers_analysis && res.data.papers_analysis.length > 0) {
+            papersAnalysis.value = res.data.papers_analysis
+          }
+        } catch (e) {
+          console.error('获取实现路径进度失败:', e)
+        }
+      }
+      await pollProgress()
+      pathProgressTimer = setInterval(pollProgress, 1000)
+    }
+    return
+  }
+  
+  // 新任务：重置状态
   generatingPath.value = true
   showPathDialog.value = true
   pathLoading.value = true
@@ -1752,6 +2629,19 @@ const generateImplementationPath = async () => {
           const res = await api.get(`/papers/implementation-progress/${pathTaskId.value}`)
           pathProgress.value = res.data
           
+          // 检查任务是否被取消
+          if (res.data.status === 'cancelled') {
+            pathLoading.value = false
+            generatingPath.value = false
+            pathError.value = '任务已取消'
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            ElMessage.warning('任务已取消')
+            return
+          }
+          
           // 如果进度中包含 papers_analysis，更新前端显示（任务进行中也能看到已完成的论文分析）
           if (res.data.papers_analysis && res.data.papers_analysis.length > 0) {
             papersAnalysis.value = res.data.papers_analysis
@@ -1784,6 +2674,19 @@ const generateImplementationPath = async () => {
         // 如果前面已经拿到一次 progress，这里可能已经有 result
         while (waited <= maxWaitMs) {
           const progress = pathProgress.value
+          
+          // 检查任务是否被取消
+          if (progress && progress.status === 'cancelled') {
+            pathLoading.value = false
+            generatingPath.value = false
+            pathError.value = '任务已取消'
+            if (pathProgressTimer) {
+              clearInterval(pathProgressTimer)
+              pathProgressTimer = null
+            }
+            ElMessage.warning('任务已取消')
+            return
+          }
           
           // 如果进度中有 papers_analysis，先更新显示（任务进行中也能看到已完成的论文分析）
           if (progress && progress.papers_analysis && progress.papers_analysis.length > 0) {
@@ -1822,14 +2725,86 @@ const generateImplementationPath = async () => {
     pathError.value = error.response?.data?.detail || error.message || '生成实现路径失败'
     ElMessage.error(pathError.value)
     console.error('生成实现路径失败:', error)
+    // 如果任务还在运行（有 pathTaskId），不要重置 generatingPath，以便用户可以重新打开对话框
+    if (!pathTaskId.value) {
+      generatingPath.value = false
+    }
   } finally {
-    pathLoading.value = false
-    generatingPath.value = false
+    // 只有在任务真正失败或完成时才重置 generatingPath
+    // 如果任务还在运行（pathTaskId 存在），保持状态以便用户可以重新打开对话框
+    if (!pathTaskId.value || !pathLoading.value) {
+      generatingPath.value = false
+    }
+    // pathLoading 在任务完成或失败时会被设置为 false，但在任务运行时应该保持 true
+  }
+}
+
+// 取消实现路径生成
+const cancelImplementationPath = async () => {
+  if (!currentTask.value.taskId) {
+    // 如果没有任务ID，直接关闭对话框
+    showPathDialog.value = false
+    return
+  }
+  
+  try {
+    cancellingPath.value = true
+    await api.post(`/papers/cancel-implementation-path/${currentTask.value.taskId}`)
+    ElMessage.success('已取消生成实现路径')
+    
+    // 停止轮询
     if (pathProgressTimer) {
       clearInterval(pathProgressTimer)
       pathProgressTimer = null
     }
+    
+    // 更新状态
+    currentTask.value.status = 'cancelled'
+    currentTask.value.error = '任务已取消'
+    if (currentTask.value.progress) {
+      currentTask.value.progress.status = 'cancelled'
+      currentTask.value.progress.current_step = '任务已取消'
+    }
+    
+    // 关闭对话框
+    showPathDialog.value = false
+    dialogMode.value = 'idle'
+  } catch (error) {
+    ElMessage.error('取消任务失败: ' + (error.response?.data?.detail || error.message))
+    console.error('取消实现路径失败:', error)
+  } finally {
+    cancellingPath.value = false
   }
+}
+
+// 处理对话框关闭
+const handlePathDialogClose = () => {
+  // 如果是在查看历史方案，关闭所有对话框，回到主界面
+  if (dialogMode.value === 'history') {
+    // 先关闭所有对话框
+    showPathDialog.value = false
+    showHistoryDialog.value = false
+    // 延迟清理数据和重置 dialogMode，确保在关闭动画完成后再执行
+    // Element Plus 对话框关闭动画大约 300ms，延迟 400ms 确保动画完成
+    setTimeout(() => {
+      // 再次确认对话框已关闭，避免状态不一致
+      if (!showPathDialog.value && !showHistoryDialog.value) {
+        viewingHistoryItem.value = null
+        dialogMode.value = 'idle'
+      }
+    }, 400)
+    return
+  }
+  
+  // 只关闭对话框，不取消任务，不清理状态
+  // 停止轮询（节省资源），但保留所有状态，以便重新打开时可以恢复
+  if (pathProgressTimer) {
+    clearInterval(pathProgressTimer)
+    pathProgressTimer = null
+  }
+  // 不重置 currentTask 状态
+  // 这样用户重新打开对话框时，可以继续查看进度或结果
+  dialogMode.value = 'idle'
 }
 
 // 导出实现路径
@@ -1940,30 +2915,50 @@ const viewHistoryPath = (historyItem) => {
     return
   }
   
-  // 填充到实现路径对话框
-  implementationPath.value = historyItem.implementation_path
-  papersAnalysis.value = historyItem.papers_analysis || []
-  pathTimings.value = historyItem.timings || null
-  pathError.value = null
-  pathLoading.value = false
+  // 历史方案是只读的，不应该修改当前任务状态
+  // 使用独立的 viewingHistoryItem 来存储历史方案数据
+  viewingHistoryItem.value = {
+    implementation_path: historyItem.implementation_path,
+    papers_analysis: historyItem.papers_analysis || [],
+    timings: historyItem.timings || null
+  }
   
-  // 关闭历史对话框，打开实现路径对话框
+  // 设置对话框模式为显示历史方案（只读）
+  dialogMode.value = 'history'
   showHistoryDialog.value = false
   showPathDialog.value = true
+  
+  // 不修改 currentTask，确保当前任务状态不受影响
 }
 
 // 格式化日期时间
 const formatDateTime = (dateStr) => {
   if (!dateStr) return ''
   try {
-    const date = new Date(dateStr)
+    // SQLite 返回的时间格式可能是 "YYYY-MM-DD HH:MM:SS"（UTC时间）
+    // 需要将其解析为 UTC 时间，然后转换为本地时间
+    let date
+    if (typeof dateStr === 'string' && dateStr.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)) {
+      // 格式为 "YYYY-MM-DD HH:MM:SS"，假设这是 UTC 时间
+      date = new Date(dateStr + ' UTC')
+    } else {
+      // 其他格式，使用标准解析
+      date = new Date(dateStr)
+    }
+    
+    // 如果解析失败，返回原字符串
+    if (isNaN(date.getTime())) {
+      return dateStr
+    }
+    
     return date.toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit'
+      second: '2-digit',
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
     })
   } catch (e) {
     return dateStr

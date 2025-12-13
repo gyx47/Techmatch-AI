@@ -223,6 +223,11 @@ async def process_paper(
     pdf_url = paper.get("pdf_url", f"https://arxiv.org/pdf/{arxiv_id}.pdf")
 
     try:
+        # 检查是否已取消（开始处理前）
+        if task_id and task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，跳过论文 {arxiv_id}")
+            raise asyncio.CancelledError("任务已取消")
+            
         logger.info(f"开始分析论文: {title} ({arxiv_id})")
 
         # ==============================
@@ -238,6 +243,11 @@ async def process_paper(
         pdf_content = await pdf_service.get_paper_content(pdf_url, arxiv_id, max_pages_per_paper)
         t_pdf_end = time.perf_counter()
         pdf_duration_ms = int((t_pdf_end - t_pdf_start) * 1000)
+
+        # 检查是否已取消（PDF 解析后）
+        if task_id and task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，停止处理论文 {arxiv_id}")
+            raise asyncio.CancelledError("任务已取消")
 
         # 更新进度：PDF 阶段完成（或失败时也记录耗时）
         if task_id and task_id in implementation_progress:
@@ -266,6 +276,11 @@ async def process_paper(
                 None,
             )
 
+        # 检查是否已取消
+        if task_id and task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，停止处理论文 {arxiv_id}")
+            raise asyncio.CancelledError("任务已取消")
+
         # ==============================
         # 2. LLM 精读分析
         # ==============================
@@ -277,6 +292,11 @@ async def process_paper(
             pdf_content=pdf_content,
             user_requirement=user_requirement,
         )
+        
+        # 检查是否已取消（LLM 分析后）
+        if task_id and task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，停止处理论文 {arxiv_id}")
+            raise asyncio.CancelledError("任务已取消")
         t_llm_end = time.perf_counter()
         # 使用 round 而不是 int，确保至少显示 1ms（如果耗时 < 1ms）
         llm_duration_ms = max(1, round((t_llm_end - t_llm_start) * 1000))
@@ -340,6 +360,9 @@ async def process_paper(
             summary_data,
         )
 
+    except asyncio.CancelledError:
+        # 任务已取消，直接抛出，让上层处理
+        raise
     except Exception as e:
         logger.error(f"分析论文失败 {arxiv_id}: {e}")
         return (
@@ -572,7 +595,27 @@ async def core_generate_implementation_path(
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    # 检查是否已取消
+    if task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+        logger.info(f"任务 {task_id} 已取消，停止处理论文分析结果")
+        return {
+            "papers_analysis": [],
+            "implementation_path": {},
+            "status": "cancelled",
+            "error_message": "任务已取消",
+        }
+
     for paper, result in zip(papers, results):
+        # 再次检查是否已取消
+        if task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，停止处理论文分析结果")
+            break
+            
+        # 处理 CancelledError
+        if isinstance(result, asyncio.CancelledError):
+            logger.info(f"论文 {paper.get('arxiv_id')} 处理被取消")
+            continue
+            
         if isinstance(result, Exception):
             logger.error(f"分析论文失败 {paper.get('arxiv_id')}: {result}")
             papers_analysis.append(
@@ -604,6 +647,16 @@ async def core_generate_implementation_path(
         if analysis_resp.arxiv_id not in existing_ids:
             implementation_progress[task_id]["papers_analysis"].append(analysis_resp.dict())
 
+    # 检查是否已取消
+    if task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+        logger.info(f"任务 {task_id} 已取消，停止后续处理")
+        return {
+            "papers_analysis": [p.dict() for p in papers_analysis],
+            "implementation_path": {},
+            "status": "cancelled",
+            "error_message": "任务已取消",
+        }
+
     if update_progress_callback:
         await update_progress_callback(implementation_progress[task_id])
 
@@ -622,6 +675,16 @@ async def core_generate_implementation_path(
 
     # 生成综合实现路径
     try:
+        # 检查是否已取消
+        if task_id in implementation_progress and implementation_progress[task_id].get("status") == "cancelled":
+            logger.info(f"任务 {task_id} 已取消，停止生成实现路径")
+            return {
+                "papers_analysis": [p.dict() for p in papers_analysis],
+                "implementation_path": {},
+                "status": "cancelled",
+                "error_message": "任务已取消",
+            }
+            
         implementation_progress[task_id]["current_step"] = "正在生成综合实现路径"
         if update_progress_callback:
             await update_progress_callback(implementation_progress[task_id])
@@ -875,6 +938,53 @@ async def get_implementation_progress(
         "papers": {},
         "papers_analysis": [],
     }
+
+
+@router.post("/cancel-implementation-path/{task_id}")
+async def cancel_implementation_path(
+    request: Request,
+    task_id: str,
+    current_user: str = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """
+    取消正在生成的实现路径任务
+    """
+    try:
+        # 1. 检查本地内存中的任务
+        if task_id in implementation_progress:
+            progress = implementation_progress[task_id]
+            if progress.get("status") == "running":
+                # 标记任务为已取消
+                implementation_progress[task_id] = {
+                    **progress,
+                    "status": "cancelled",
+                    "current_step": "任务已取消",
+                }
+                logger.info(f"任务 {task_id} 已标记为取消（本地模式）")
+                return {"status": "cancelled", "message": "任务已取消"}
+            else:
+                return {"status": "error", "message": f"任务状态为 {progress.get('status')}，无法取消"}
+
+        # 2. 如果 Redis 可用，尝试取消 Redis 中的任务
+        if getattr(request.app.state, "use_redis", False):
+            try:
+                redis = request.app.state.redis_pool
+                # 尝试取消 ARQ 任务
+                job = await redis.get_job(task_id)
+                if job:
+                    await job.abort()
+                    logger.info(f"任务 {task_id} 已取消（Redis 模式）")
+                    return {"status": "cancelled", "message": "任务已取消"}
+                else:
+                    return {"status": "error", "message": "未找到该任务"}
+            except Exception as e:
+                logger.error(f"取消 Redis 任务失败: {e}")
+                return {"status": "error", "message": f"取消任务失败: {str(e)}"}
+
+        return {"status": "error", "message": "未找到该任务"}
+    except Exception as e:
+        logger.error(f"取消实现路径任务失败: {e}")
+        raise HTTPException(status_code=500, detail=f"取消任务失败: {str(e)}")
 
 
 @router.get("/implementation-path-history/{history_id}")

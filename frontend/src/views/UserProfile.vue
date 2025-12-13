@@ -507,10 +507,12 @@ const handleRematch = async (row) => {
     }))
     
     // 跳转到智能匹配页面
+    const historyId = response.data.history_id || row.id
     router.push({
       path: '/smart-match',
       query: {
         fromHistory: 'true',
+        historyId: historyId.toString(),  // 将 historyId 也放在 URL 参数中，以便刷新后恢复
         q: response.data.search_desc || row.searchContent,
         type: response.data.match_mode || row.matchMode || 'enterprise'
       }
