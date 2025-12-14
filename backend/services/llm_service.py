@@ -330,6 +330,240 @@ class LLMService:
             logger.warning(f"警告: 评分区分度较低，{len(all_results)}篇论文中只有{unique_scores}个不同的分数")
         
         return all_results
+    
+    async def expand_paper_to_scenarios(self, paper_title: str, paper_abstract: str) -> str:
+        """
+        将学术论文扩展为企业应用场景
+        """
+        prompt = f"""
+        你是一位技术商业化专家。请分析以下学术论文，并指出它可能解决哪些企业实际需求。
+        
+        论文标题：{paper_title}
+        论文摘要：{paper_abstract}
+        
+        请做两件事：
+        1. 列出3-5个可能的应用行业（如：制造业、医疗、金融等）
+        2. 生成一段"企业应用场景描述"，说明这项技术能解决什么具体问题
+        
+        返回格式：行业1, 行业2, 行业3. [场景]: 应用场景描述...
+        """
+        
+        try:
+            content = await self._call_deepseek(
+                [{"role": "user", "content": prompt}],
+                temperature=0.7,
+                force_json=False
+            )
+            return content
+        except Exception as e:
+            logger.warning(f"论文场景扩展失败: {e}")
+            return f"通用技术"
+    
+    async def score_requirements_for_paper(
+        self, 
+        paper_title: str,
+        paper_abstract: str,
+        paper_categories: str,
+        requirements: List[Dict]
+    ) -> List[Dict]:
+        """
+        评估论文与需求的匹配度（Listwise批量评估）
+        """
+        if not self.api_key:
+            return self._get_default_scores(requirements)
+        
+        # 构建批量评估的Prompt
+        requirements_text = ""
+        for idx, req in enumerate(requirements, 1):
+            requirements_text += f"""
+[需求 {idx} - ID: {req['requirement_id']}]
+标题: {req['title']}
+行业: {req['industry']}
+痛点: {req['pain_points'][:200]}...
+技术难度: {req['technical_level']}
+市场规模: {req['market_size']}
+
+---
+"""
+        
+        system_prompt = """你是一位资深的技术转移顾问，负责评估科研成果的商业化潜力。请从市场需求、技术适配度、实施难度、商业价值等维度进行综合评估。"""
+        
+        user_prompt = f"""
+### 评估任务
+待评估的科研成果：
+标题：{paper_title}
+摘要：{paper_abstract}
+领域：{paper_categories}
+
+### 候选需求列表
+{requirements_text}
+
+### 评分标准 (0-100分)
+- **[90-100] 直接落地 (S级)**: 论文技术直接解决该需求痛点，无需大改，市场明确
+- **[75-89] 高价值适配 (A级)**: 核心算法对口，需一定适配但商业价值高
+- **[60-74] 需技术适配 (B级)**: 相关但需较大技术改造，有潜在价值
+- **[40-59] 理论相关 (C级)**: 同一技术领域，但解决的是不同问题
+- **[0-39] 关联性弱 (D级)**: 基本不相关，强行匹配
+
+### 额外要求
+为每个匹配需求提供简短的"实施建议"（50字内），说明如何将技术应用到该需求中。
+
+### 输出格式
+返回JSON数组：
+[
+    {{
+        "requirement_id": "需求ID",
+        "score": 85,
+        "reason": "详细匹配理由...",
+        "implementation_suggestion": "实施建议..."
+    }}
+]
+"""
+        
+        try:
+            content = await self._call_deepseek([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ], temperature=0.7, max_tokens=2000, force_json=False)
+            
+            # 解析结果
+            import json
+            data = json.loads(content)
+            
+            # 返回排序后的结果
+            return sorted(data, key=lambda x: x["score"], reverse=True)
+            
+        except Exception as e:
+            logger.error(f"需求评分失败: {e}")
+            return self._get_default_scores(requirements)
+    
+    def _get_default_scores(self, requirements: List[Dict]) -> List[Dict]:
+        """基于向量相似度生成有意义的评分和理由"""
+        results = []
+        
+        for req in requirements:
+            # 获取向量分数（从传入的requirements中获取）
+            vector_score = req.get("vector_score", 0)
+            
+            # 将0-1的向量分数转换为0-100
+            score = min(100, int(vector_score * 120))
+            
+            # 从需求中提取关键信息
+            industry = req.get("industry", "")
+            technical_level = req.get("technical_level", "")
+            market_size = req.get("market_size", "")
+            pain_points = req.get("pain_points", "")
+            
+            # 生成有意义的推荐理由
+            reason = self._generate_reason_from_requirement(
+                score, industry, technical_level, market_size, pain_points
+            )
+            
+            # 生成实施建议
+            suggestion = self._generate_suggestion_from_requirement(
+                score, industry, technical_level, market_size
+            )
+            
+            # 确定匹配类型
+            match_type = self._get_match_type_from_score(score)
+            
+            results.append({
+                "requirement_id": req["requirement_id"],
+                "score": score,
+                "reason": reason,
+                "implementation_suggestion": suggestion,
+                "match_type": match_type
+            })
+        
+        # 按分数排序
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results
+
+    def _generate_reason_from_requirement(self, score, industry, technical_level, market_size, pain_points):
+        """根据需求信息生成推荐理由"""
+        
+        if score >= 80:
+            base = "高匹配度：技术方案与需求高度契合"
+        elif score >= 60:
+            base = "中等匹配度：技术方案与需求有一定相关性"
+        elif score >= 40:
+            base = "理论相关：属于同一技术领域"
+        else:
+            base = "关联性较弱：向量相似度较低"
+        
+        # 添加行业信息
+        if industry:
+            base += f"，涉及{industry}行业"
+        
+        # 添加技术难度信息
+        if technical_level:
+            if technical_level in ["高", "极高"]:
+                base += "，技术实施难度较高"
+            elif technical_level == "中":
+                base += "，技术实施难度适中"
+            else:
+                base += "，技术实施难度较低"
+        
+        # 添加市场规模信息
+        if market_size:
+            if market_size in ["大型", "超大型"]:
+                base += "，市场潜力大"
+            elif market_size == "中型":
+                base += "，市场潜力中等"
+            else:
+                base += "，市场相对细分"
+        
+        # 如果有痛点信息，可以提取关键词
+        if pain_points:
+            keywords = ["数据", "系统", "安全", "成本", "效率", "人才", "集成"]
+            found = [kw for kw in keywords if kw in pain_points]
+            if found:
+                base += f"，主要涉及{', '.join(found[:2])}等方面的问题"
+        
+        return base
+
+    def _generate_suggestion_from_requirement(self, score, industry, technical_level, market_size):
+        """根据需求信息生成实施建议"""
+        
+        if score >= 80:
+            base = "建议直接进行技术对接，可考虑开展试点项目"
+        elif score >= 60:
+            base = "建议进行详细技术评估，制定适配方案"
+        elif score >= 40:
+            base = "建议进一步分析技术契合度，评估商业可行性"
+        else:
+            base = "建议寻找更匹配的技术方案或调整需求方向"
+        
+        # 根据技术难度添加建议
+        if technical_level in ["高", "极高"]:
+            base += "。由于技术难度较高，建议组建专家团队进行技术攻关"
+        elif technical_level == "中":
+            base += "。建议分阶段实施，先解决核心问题"
+        elif technical_level in ["低", "简单"]:
+            base += "。实施难度较低，可快速推进"
+        
+        # 根据市场规模添加建议
+        if market_size in ["大型", "超大型"]:
+            base += "。市场规模较大，建议制定长期发展规划"
+        elif market_size == "中型":
+            base += "。建议从小规模试点开始，逐步扩大"
+        else:
+            base += "。市场相对细分，建议精准定位目标客户"
+        
+        return base
+
+    def _get_match_type_from_score(self, score):
+        """根据分数确定匹配类型"""
+        if score >= 90:
+            return "S级-直接落地"
+        elif score >= 75:
+            return "A级-高价值适配"
+        elif score >= 60:
+            return "B级-需技术适配"
+        elif score >= 40:
+            return "C级-理论相关"
+        else:
+            return "D级-关联性弱"
 
 # 单例模式保持不变...
 _llm_service = None

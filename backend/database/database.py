@@ -51,6 +51,25 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # 创建需求表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS requirements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requirement_id VARCHAR(50) UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                industry VARCHAR(100),
+                pain_points TEXT,
+                technical_level VARCHAR(50),
+                market_size VARCHAR(50),
+                contact_info TEXT,
+                status VARCHAR(20) DEFAULT 'active',
+                source VARCHAR(50) DEFAULT 'manual',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         
         # 创建搜索历史表
         cursor.execute("""
@@ -89,6 +108,20 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+
+        # 创建成果-需求匹配历史表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS paper_to_requirement_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                paper_id VARCHAR(20) NOT NULL,
+                paper_title TEXT,
+                requirement_ids TEXT,
+                match_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
         
         # 创建匹配结果表（保存每次匹配的详细结果）
         cursor.execute("""
@@ -109,6 +142,21 @@ def init_db():
                 result_order INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (history_id) REFERENCES match_history (id) ON DELETE CASCADE
+            )
+        """)
+
+        # 创建需求匹配理由表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS match_reasons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                paper_title TEXT NOT NULL,
+                requirement_id VARCHAR(50) NOT NULL,
+                reason TEXT,
+                suggestion TEXT,
+                estimated_time VARCHAR(50),
+                success_probability VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(paper_title, requirement_id)
             )
         """)
         
@@ -315,3 +363,35 @@ def get_match_results_by_history_id(history_id: int) -> List[dict]:
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return results
+
+def get_requirement_by_id(requirement_id: str) -> Optional[dict]:
+    """根据需求ID获取需求信息"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM requirements WHERE requirement_id = ?", (requirement_id,))
+    requirement = cursor.fetchone()
+    conn.close()
+    return dict(requirement) if requirement else None
+
+def update_requirement(requirement_id: str, update_data: dict) -> bool:
+    """更新需求信息"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建更新SQL
+    set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
+    set_clause += ', updated_at = CURRENT_TIMESTAMP'
+    
+    values = list(update_data.values())
+    values.append(requirement_id)
+    
+    cursor.execute(f"""
+        UPDATE requirements 
+        SET {set_clause}
+        WHERE requirement_id = ?
+    """, values)
+    
+    conn.commit()
+    success = cursor.rowcount > 0
+    conn.close()
+    return success

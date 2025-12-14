@@ -39,6 +39,199 @@ class MatchingResponse(BaseModel):
     total: int
     history_id: Optional[int] = None  # 如果保存了历史，返回历史ID
 
+class PaperToRequirementRequest(BaseModel):
+    paper_title: str  # 论文标题
+    paper_abstract: str  # 论文摘要
+    paper_categories: Optional[str] = ""  # 论文分类
+    top_k: int = 20  # 返回的需求数量
+    save_match: bool = True  # 是否保存匹配记录
+
+class RequirementResponse(BaseModel):
+    requirement_id: str
+    title: str
+    description: str
+    industry: str
+    pain_points: str
+    technical_level: str
+    market_size: str
+    score: float
+    reason: str
+    match_type: str
+    implementation_suggestion: str
+    vector_score: float
+
+class PaperToRequirementResponse(BaseModel):
+    requirements: List[RequirementResponse]
+    total: int
+    match_id: Optional[int] = None
+
+class RequirementCreate(BaseModel):
+    requirement_id: str  # 需求ID（可自定义）
+    title: str  # 需求标题
+    description: str  # 详细描述
+    industry: str  # 行业
+    pain_points: str  # 痛点
+    technical_level: str = "medium"  # 技术难度
+    market_size: str = "medium"  # 市场规模
+    contact_info: Optional[str] = None  # 联系信息
+
+@router.post("/paper-to-requirements", response_model=PaperToRequirementResponse)
+async def match_paper_to_requirements(
+    request: PaperToRequirementRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    科研成果匹配需求接口
+    输入：论文信息 → 输出：匹配的企业需求
+    """
+    try:
+        # 导入新的匹配服务
+        from services.requirement_matching_service import match_requirements_for_paper
+        
+        # 调用匹配服务
+        results = await match_requirements_for_paper(
+            paper_title=request.paper_title,
+            paper_abstract=request.paper_abstract,
+            paper_categories=request.paper_categories,
+            top_k=request.top_k
+        )
+        
+        match_id = None
+        
+        # 保存匹配记录
+        if request.save_match and results:
+            try:
+                user = get_user_by_username(current_user)
+                user_id = user["id"] if user else None
+                
+                # 保存到新的匹配表
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    INSERT INTO paper_to_requirement_matches 
+                    (user_id, paper_id, paper_title, requirement_ids, match_count)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    user_id,
+                    "custom_paper",  # 如果没有arxiv_id
+                    request.paper_title[:100],
+                    ",".join([r["requirement_id"] for r in results]),
+                    len(results)
+                ))
+                
+                match_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                
+                logger.info(f"论文→需求匹配记录已保存，ID: {match_id}")
+            except Exception as e:
+                logger.error(f"保存匹配记录失败: {e}")
+        
+        return {
+            "requirements": results,
+            "total": len(results),
+            "match_id": match_id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"需求匹配失败: {str(e)}")
+        
+@router.post("/requirements")
+async def create_requirement(
+    requirement: RequirementCreate,
+    current_user: str = Depends(get_current_user)
+):
+    """创建新需求（同时向量化）"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 检查是否已存在
+        cursor.execute("SELECT id FROM requirements WHERE requirement_id = ?", 
+                      (requirement.requirement_id,))
+        if cursor.fetchone():
+            conn.close()
+            raise HTTPException(status_code=400, detail="需求ID已存在")
+        
+        # 插入数据库
+        cursor.execute("""
+            INSERT INTO requirements 
+            (requirement_id, title, description, industry, pain_points, 
+             technical_level, market_size, contact_info)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            requirement.requirement_id,
+            requirement.title,
+            requirement.description,
+            requirement.industry,
+            requirement.pain_points,
+            requirement.technical_level,
+            requirement.market_size,
+            requirement.contact_info
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+        # 向量化需求
+        vector_service = get_vector_service()
+        vector_service.add_requirement(
+            requirement_id=requirement.requirement_id,
+            title=requirement.title,
+            description=requirement.description,
+            industry=requirement.industry,
+            pain_points=requirement.pain_points
+        )
+        
+        return {"message": "需求创建成功", "requirement_id": requirement.requirement_id}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建需求失败: {str(e)}")
+
+@router.get("/requirements")
+async def list_requirements(
+    page: int = 1,
+    page_size: int = 20,
+    industry: Optional[str] = None,
+    current_user: str = Depends(get_current_user)
+):
+    """获取需求列表"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 构建查询条件
+        query = "SELECT * FROM requirements WHERE status = 'active'"
+        params = []
+        
+        if industry:
+            query += " AND industry LIKE ?"
+            params.append(f"%{industry}%")
+        
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([page_size, (page - 1) * page_size])
+        
+        cursor.execute(query, params)
+        requirements = [dict(row) for row in cursor.fetchall()]
+        
+        # 获取总数
+        cursor.execute("SELECT COUNT(*) as total FROM requirements WHERE status = 'active'")
+        total = cursor.fetchone()['total']
+        
+        conn.close()
+        
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "requirements": requirements
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取需求列表失败: {str(e)}")
+    
+
 @router.post("/match", response_model=MatchingResponse)
 async def match_user_requirement(
     request: MatchingRequest,
@@ -91,6 +284,38 @@ async def match_user_requirement(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匹配失败: {str(e)}")
+    
+@router.get("/requirements/{requirement_id}")
+async def get_requirement_detail(
+    requirement_id: str,
+    current_user: str = Depends(get_current_user)
+):
+    """获取需求详情"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 获取需求基本信息
+        cursor.execute("""
+            SELECT * FROM requirements 
+            WHERE requirement_id = ? AND status = 'active'
+        """, (requirement_id,))
+        
+        requirement = cursor.fetchone()
+        conn.close()
+        
+        if not requirement:
+            raise HTTPException(status_code=404, detail="需求不存在")
+        
+        # 转换为字典
+        requirement_dict = dict(requirement)
+        
+        return requirement_dict
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取需求详情失败: {str(e)}")
 
 @router.post("/index-papers")
 async def index_existing_papers(

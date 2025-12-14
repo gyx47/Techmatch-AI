@@ -33,6 +33,18 @@ class VectorService:
             path=str(db_path),
             settings=Settings(anonymized_telemetry=False)
         )
+
+        # 原有的论文集合
+        self.paper_collection = self.client.get_or_create_collection(
+            name="papers",
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        # 新增需求集合
+        self.requirement_collection = self.client.get_or_create_collection(
+            name="requirements",
+            metadata={"hnsw:space": "cosine"}
+        )
         
         # 获取或创建集合
         try:
@@ -149,6 +161,35 @@ class VectorService:
         except Exception as e:
             logger.error(f"添加论文 {paper_id} 到向量数据库失败: {str(e)}")
             raise
+
+    def add_requirement(self, requirement_id: str, title: str, description: str, 
+                       industry: str = "", pain_points: str = "") -> bool:
+        """
+        将需求添加到向量数据库
+        """
+        try:
+            # 组合文本：标题 + 描述 + 行业 + 痛点
+            text = f"{title}\n{description}\n行业:{industry}\n痛点:{pain_points}"
+            
+            # 生成向量
+            embedding = self.embed_text(text)
+            
+            # 存储到需求集合
+            self.requirement_collection.add(
+                embeddings=[embedding],
+                ids=[requirement_id],
+                metadatas=[{
+                    "title": title,
+                    "description": description[:500],
+                    "industry": industry,
+                    "status": "active",
+                    "type": "requirement"
+                }]
+            )
+            return True
+        except Exception as e:
+            logger.error(f"添加需求失败: {e}")
+            return False
     
     def search_similar(self, query_text: str, top_k: int = 50) -> List[Tuple[str, float]]:
         """
@@ -215,6 +256,30 @@ class VectorService:
                 )
             
             raise
+
+    def search_requirements(self, query_text: str, top_k: int = 50) -> List[Tuple[str, float]]:
+        """
+        搜索相似需求
+        """
+        try:
+            query_embedding = self.embed_text(query_text)
+            
+            results = self.requirement_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                where={"status": "active"}  # 只搜索活跃需求
+            )
+            
+            requirement_ids = results['ids'][0]
+            distances = results['distances'][0]
+            
+            # 将距离转换为相似度
+            similarities = [(rid, 1 - dist) for rid, dist in zip(requirement_ids, distances)]
+            
+            return similarities
+        except Exception as e:
+            logger.error(f"需求搜索失败: {e}")
+            return []
     
     def get_paper_count(self) -> int:
         """获取向量数据库中的论文数量"""

@@ -50,6 +50,16 @@ const routes = [
     component: () => import('../views/MatchingResults.vue'),
     meta: { title: '匹配结果', requiresAuth: true }
   },
+  // 需求详情页面
+  {
+    path: '/requirement/:id',
+    name: 'RequirementDetail',
+    component: () => import('../views/RequirementDetail.vue'),
+    meta: { 
+      title: '需求详情', 
+      requiresAuth: true 
+    }
+  },
   {
     path: '/proposal/:id',
     name: 'MatchProposal',

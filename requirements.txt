@@ -4,7 +4,7 @@ uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # 数据库相关
-sqlite3  # Python内置，无需安装
+# sqlite3  # Python内置，无需安装
 
 # HTTP请求
 requests==2.31.0
