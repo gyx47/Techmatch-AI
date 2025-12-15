@@ -117,8 +117,42 @@
                 </div>
                 <div class="card-body">
                   <div class="summary-content" v-html="highlightKeywords(item.summary)"></div>
-                  
-                  <!-- 推荐理由 -->
+  
+                  <!-- 如果是需求类型，显示额外信息 -->
+                <div v-if="item.type === '需求'" class="demand-extra">
+                  <div class="extra-item" v-if="item.industry">
+                    <span class="extra-label">行业：</span>
+                    <span class="extra-value">{{ item.industry }}</span>
+                  </div>
+                  <div class="extra-item" v-if="item.technical_level">
+                    <span class="extra-label">技术难度：</span>
+                    <el-tag size="small" :type="getTechLevelType(item.technical_level)">
+                      {{ item.technical_level }}
+                    </el-tag>
+                  </div>
+                  <div class="extra-item" v-if="item.market_size">
+                    <span class="extra-label">市场规模：</span>
+                    <span class="extra-value">{{ item.market_size }}</span>
+                  </div>
+                  <div class="extra-item" v-if="item.pain_points">
+                    <span class="extra-label">主要痛点：</span>
+                    <span class="extra-value">{{ item.pain_points }}</span>
+                  </div>
+                </div>
+                
+                <!-- 如果是成果类型，显示作者等信息 -->
+                <div v-else class="achievement-extra">
+                  <div class="extra-item" v-if="item.authors">
+                    <span class="extra-label">作者：</span>
+                    <span class="extra-value">{{ item.authors.split(',').slice(0, 3).join(', ') }}{{ item.authors.split(',').length > 3 ? '等' : '' }}</span>
+                  </div>
+                  <div class="extra-item" v-if="item.published_date">
+                    <span class="extra-label">发布日期：</span>
+                    <span class="extra-value">{{ formatDate(item.published_date) }}</span>
+                  </div>
+                </div>
+                
+                <!-- 推荐理由 -->
                   <div class="reason-section" v-if="item.reason">
                     <div class="reason-label">
                       <el-icon><Opportunity /></el-icon>
@@ -126,7 +160,13 @@
                     </div>
                     <div class="reason-text">{{ item.reason }}</div>
                   </div>
-                  
+  
+                <!-- 实施建议 -->
+                <div class="implementation-section" v-if="item.implementation_suggestion">
+                  <div class="reason-label">实施建议：</div>
+                  <div class="reason-text">{{ item.implementation_suggestion }}</div>
+                </div>
+                
                   <div class="confidence-section">
                     <div class="score-header">
                       <span class="score-label">匹配度</span>
@@ -167,7 +207,7 @@
                   </div>
                 </div>
                 <div class="card-footer">
-                  <el-button type="primary" size="default" @click="viewProposal(item.id)" plain>
+                  <el-button type="primary" size="default" @click="viewProposal(item)" plain>
                     <el-icon><Document /></el-icon>
                     查看详情
                   </el-button>
@@ -2279,6 +2319,9 @@ const startMatch = async () => {
   // 清除之前保存的状态（新匹配时）
   clearMatchState()
 
+  let response = null
+  let convertedResults = []
+
   // 保存正在进行的匹配任务状态（用于页面切换后恢复）
   // 保存用户ID，确保只有同一用户才能恢复任务状态
   const matchTaskState = {
@@ -2292,36 +2335,37 @@ const startMatch = async () => {
   localStorage.setItem('smartMatchTaskState', JSON.stringify(matchTaskState))
 
   try {
-    // 调用统一匹配API（包含论文和成果）
-    const response = await api.post('/matching/match-all', {
-      requirement: searchText.value,
-      top_k: 50,
-      match_mode: matchMode.value,
-      save_history: true  // 自动保存匹配历史
-    })
+    if(matchMode.value === 'enterprise') {
+      // 调用统一匹配API（包含论文和成果）
+      response = await api.post('/matching/match-all', {
+        requirement: searchText.value,
+        top_k: 50,
+        match_mode: matchMode.value,
+        save_history: true  // 自动保存匹配历史
+      })
 
-    // 后端返回的混合结果（论文和成果）
-    const items = response.data.papers || []
-    const convertedResults = items.map((item, index) => {
-      // 后端返回的 score 是 0-100 的整数
-      const score = item.score || item.similarity_score || 0
-      const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
-      
-      // 根据 item_type 区分论文和成果
+      // 后端返回的混合结果（论文和成果）
+      const items = response.data.papers || []
+      convertedResults = items.map((item, index) => {
+        // 后端返回的 score 是 0-100 的整数
+        const score = item.score || item.similarity_score || 0
+          const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
+        
+        // 根据 item_type 区分论文和成果
       if (item.item_type === 'achievement') {
         // 成果格式
         return {
-          id: `achievement_${item.achievement_id}`,
-          achievement_id: item.achievement_id,
+            id: `achievement_${item.achievement_id}`,
+            achievement_id: item.achievement_id,
           title: item.name || '无标题',
-          summary: item.description || '暂无描述',
+            summary: item.description || '暂无描述',
           application: item.application || '',
-          matchScore: matchScore,
-          type: '成果',
+            matchScore: matchScore,
+            type: '成果',
           field: item.field || '未分类',
           keywords: [],
           paper_id: null, // 成果没有 paper_id
-          pdf_url: null, // 成果没有 PDF
+            pdf_url: null, // 成果没有 PDF
           authors: '', // 成果没有作者
           published_date: '',
           reason: item.reason || '',
@@ -2342,21 +2386,60 @@ const startMatch = async () => {
           matchScore: matchScore,
           type: '论文',
           field: item.categories || '未分类',
-          keywords: item.categories ? item.categories.split(',') : [],
-          paper_id: item.paper_id,
-          pdf_url: item.pdf_url,
-          authors: item.authors || '',
-          published_date: item.published_date || '',
-          reason: item.reason || '',
-          match_type: item.match_type || '',
-          vector_score: item.vector_score || 0
+            keywords: item.categories ? item.categories.split(',') : [],
+            paper_id: item.paper_id,
+            pdf_url: item.pdf_url,
+            authors: item.authors || '',
+            published_date: item.published_date || '',
+            reason: item.reason || '',
+            match_type: item.match_type || '',
+            vector_score: item.vector_score || 0
         }
-      }
-    })
+        }
+      })
 
-    // 更新结果数据（使用真实数据）
-    matchResults.value = convertedResults
+      // 更新结果数据（使用真实数据）
+      matchResults.value = convertedResults
+    } else if(matchMode.value === 'researcher') {
+      // 专家找需求：调用新的接口
+      // 我们需要解析搜索文本，提取论文信息
+      const paperInfo = extractPaperInfo(searchText.value)
+      
+      response = await api.post('/matching/paper-to-requirements', {
+        paper_title: paperInfo.title || '论文',
+        paper_abstract: paperInfo.abstract || searchText.value,
+        paper_categories: paperInfo.categories || '',
+        top_k: 50,
+        save_match: true
+      })
 
+      // 处理需求结果
+      const requirements = response.data.requirements || []
+      convertedResults = requirements.map((req, index) => {
+        const score = req.score || req.vector_score || 0
+        const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
+        return{
+          id: req.requirement_id || `req_${index}`,
+          title: req.title || '无标题',
+          summary: req.description || '暂无描述',
+          matchScore: matchScore,
+          type: '需求',
+          field: req.industry || '未分类',
+          industry: req.industry,
+          technical_level: req.technical_level,
+          market_size: req.market_size,
+          requirement_id: req.requirement_id,
+          reason: req.reason,
+          match_type: req.match_type,
+          vector_score: req.vector_score,
+          implementation_suggestion: req.implementation_suggestion,
+          pain_points: req.pain_points
+        }
+    
+      })
+
+      matchResults.value = convertedResults
+    }
     // 停止轮询（如果正在运行）
     if (matchTaskPollTimer) {
       clearInterval(matchTaskPollTimer)
@@ -2453,6 +2536,34 @@ const startMatch = async () => {
     ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
     console.error('匹配失败:', error)
   }
+}
+
+// 从文本中提取论文信息
+const extractPaperInfo = (text) => {
+  // 简单的解析逻辑，可以更智能
+  const lines = text.split('\n')
+  const info = {
+    title: '',
+    abstract: '',
+    categories: ''
+  }
+  
+  lines.forEach(line => {
+    if (line.toLowerCase().includes('标题') || line.toLowerCase().includes('title')) {
+      info.title = line.replace(/标题:|title:/i, '').trim()
+    } else if (line.toLowerCase().includes('摘要') || line.toLowerCase().includes('abstract')) {
+      info.abstract = line.replace(/摘要:|abstract:/i, '').trim()
+    } else if (line.toLowerCase().includes('分类') || line.toLowerCase().includes('categories')) {
+      info.categories = line.replace(/分类:|categories:/i, '').trim()
+    }
+  })
+  
+  // 如果没有明确的关键词，假设整个文本是摘要
+  if (!info.abstract && text.length < 1000) {
+    info.abstract = text
+  }
+  
+  return info
 }
 
 // 获取匹配度颜色
@@ -2826,24 +2937,48 @@ const exportPath = () => {
 }
 
 // 查看合作方案
-const viewProposal = (id) => {
-  // 保存当前状态和匹配结果后再跳转
-  const state = {
-    searchText: searchText.value,
-    matchMode: matchMode.value,
-    hasResults: showResults.value,
-    results: matchResults.value, // 保存完整的匹配结果
-    timestamp: Date.now(),
+const viewProposal = (item) => {
+  if (item.type === '需求') {
+    // 跳转到需求详情页面
+    router.push({
+      path: `/requirement/${item.requirement_id || item.id}`,
+      query: {
+        from: 'smart-match',
+        search_text: searchText.value,  // 传递搜索文本
+        match_mode: matchMode.value,
+        title: item.title,
+        description: item.summary,
+        industry: item.industry,
+        technical_level: item.technical_level,
+        market_size: item.market_size,
+        pain_points: item.pain_points,
+        match_score: item.matchScore,
+        reason: item.reason,
+        match_type: item.match_type,
+        implementation_suggestion: item.implementation_suggestion,
+        vector_score: item.vector_score
+      }
+    })
+  }else{
+    // 保存当前状态和匹配结果后再跳转
+    const id = item.paper_id || item.id
+    const state = {
+      searchText: searchText.value,
+      matchMode: matchMode.value,
+      hasResults: showResults.value,
+      results: matchResults.value, // 保存完整的匹配结果
+      timestamp: Date.now(),
     userId: userStore.userInfo?.id || null // 保存当前用户ID
-  }
-  localStorage.setItem('smartMatchState', JSON.stringify(state))
-  
-  router.push({
-    path: `/proposal/${id}`,
-    query: {
-      from: 'smart-match'
     }
-  })
+    localStorage.setItem('smartMatchState', JSON.stringify(state))
+    
+    router.push({
+      path: `/proposal/${id}`,
+      query: {
+        from: 'smart-match'
+      }
+    })
+  }
 }
 
 // 打开PDF
@@ -2986,6 +3121,12 @@ const loadAllImplementationPathHistory = async () => {
   } finally {
     allHistoryLoading.value = false
   }
+}
+
+const getTechLevelType = (level) => {
+  if (level === '高' || level === '极高') return 'danger'
+  if (level === '中') return 'warning'
+  return 'success'
 }
 </script>
 

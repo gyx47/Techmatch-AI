@@ -38,6 +38,16 @@ const routes = [
     component: () => import('../views/SmartMatch.vue'),
     meta: { title: 'AI智能匹配', requiresAuth: true }
   },
+  // 需求详情页面
+  {
+    path: '/requirement/:id',
+    name: 'RequirementDetail',
+    component: () => import('../views/RequirementDetail.vue'),
+    meta: { 
+      title: '需求详情', 
+      requiresAuth: true 
+    }
+  },
   {
     path: '/proposal/:id',
     name: 'MatchProposal',
