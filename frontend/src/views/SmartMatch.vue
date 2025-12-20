@@ -60,18 +60,8 @@
             <h2 class="results-title">匹配结果</h2>
             <p class="results-subtitle">为您找到 {{ filteredResults.length }} 个匹配项</p>
           </div>
-          <div class="action-buttons" v-if="selectedPapers.length > 0">
-            <el-button 
-              type="success" 
-              size="large"
-              :loading="currentTask.status === 'generating' && !currentTask.taskId"
-              :disabled="loading || currentTask.status === 'generating'"
-              @click="startNewTask"
-            >
-              <el-icon><Document /></el-icon>
-              生成实现路径 (已选 {{ selectedPapers.length }} 篇)
-            </el-button>
-            <!-- 只在生成中时显示查看进度按钮 -->
+          <div class="action-buttons">
+            <!-- 查看生成进度按钮：在生成中时始终显示，不受选中论文数量影响 -->
             <el-button 
               v-if="currentTask.status === 'generating'"
               type="primary" 
@@ -82,9 +72,22 @@
               <el-icon><View /></el-icon>
               查看生成进度
             </el-button>
-            <el-button @click="clearSelection" size="large">
-              清空选择
-            </el-button>
+            <!-- 其他按钮：只在有选中论文时显示 -->
+            <template v-if="selectedPapers.length > 0">
+              <el-button 
+                type="success" 
+                size="large"
+                :loading="currentTask.status === 'generating' && !currentTask.taskId"
+                :disabled="loading || currentTask.status === 'generating'"
+                @click="startNewTask"
+              >
+                <el-icon><Document /></el-icon>
+                生成实现路径 (已选 {{ selectedPapers.length }} 篇)
+              </el-button>
+              <el-button @click="clearSelection" size="large">
+                清空选择
+              </el-button>
+            </template>
           </div>
           <div class="action-buttons" v-if="currentHistoryId">
             <el-button 
@@ -102,6 +105,7 @@
           <el-col :xs="24" :sm="12" :md="8" v-for="item in filteredResults" :key="item.id">
             <div class="result-card-wrapper">
               <div class="paper-card" :class="{ 'selected': item.type === '论文' && isPaperSelected(item.paper_id) }">
+                <!-- 只有论文类型可以勾选生成实现路径，需求暂时不支持 -->
                 <div class="card-checkbox-wrapper" v-if="item.type === '论文' && item.paper_id">
                   <el-checkbox 
                     v-model="selectedPaperIds" 
@@ -117,31 +121,9 @@
                 </div>
                 <div class="card-body">
                   <div class="summary-content" v-html="highlightKeywords(item.summary)"></div>
-  
-                  <!-- 如果是需求类型，显示额外信息 -->
-                <div v-if="item.type === '需求'" class="demand-extra">
-                  <div class="extra-item" v-if="item.industry">
-                    <span class="extra-label">行业：</span>
-                    <span class="extra-value">{{ item.industry }}</span>
-                  </div>
-                  <div class="extra-item" v-if="item.technical_level">
-                    <span class="extra-label">技术难度：</span>
-                    <el-tag size="small" :type="getTechLevelType(item.technical_level)">
-                      {{ item.technical_level }}
-                    </el-tag>
-                  </div>
-                  <div class="extra-item" v-if="item.market_size">
-                    <span class="extra-label">市场规模：</span>
-                    <span class="extra-value">{{ item.market_size }}</span>
-                  </div>
-                  <div class="extra-item" v-if="item.pain_points">
-                    <span class="extra-label">主要痛点：</span>
-                    <span class="extra-value">{{ item.pain_points }}</span>
-                  </div>
-                </div>
                 
                 <!-- 如果是成果类型，显示作者等信息 -->
-                <div v-else class="achievement-extra">
+                <div v-if="item.type !== '需求'" class="achievement-extra">
                   <div class="extra-item" v-if="item.authors">
                     <span class="extra-label">作者：</span>
                     <span class="extra-value">{{ item.authors.split(',').slice(0, 3).join(', ') }}{{ item.authors.split(',').length > 3 ? '等' : '' }}</span>
@@ -1311,14 +1293,16 @@ const allHistoryPage = ref(1)
 const allHistoryPageSize = ref(20)
 const allHistoryTotal = ref(0)
 
-// 保存匹配状态到 localStorage（只在查看合作方案后保存）
+// 保存匹配状态到 localStorage（包含匹配结果，用于返回后恢复）
 const saveMatchState = () => {
   const state = {
     searchText: searchText.value,
     matchMode: matchMode.value,
     hasResults: showResults.value,
+    results: matchResults.value,  // 保存完整的匹配结果
     timestamp: Date.now(),
-    userId: userStore.userInfo?.id || null // 保存当前用户ID
+    userId: userStore.userInfo?.id || null, // 保存当前用户ID
+    currentHistoryId: currentHistoryId.value  // 保存历史ID
   }
   localStorage.setItem('smartMatchState', JSON.stringify(state))
 }
@@ -1356,6 +1340,10 @@ const restoreMatchState = () => {
             matchResults.value = state.results
             showResults.value = true
             currentMatchMode.value = state.matchMode || 'enterprise'
+            // 恢复历史ID（如果存在）
+            if (state.currentHistoryId) {
+              currentHistoryId.value = state.currentHistoryId
+            }
           } else {
             showResults.value = false
           }
@@ -1736,10 +1724,32 @@ const convertBackendMatchResults = (papers) => {
     const score = paper.score || 0
     const matchScore = score > 1 ? Math.round(score) : Math.round(score * 100)
     
-    // 根据item_type判断是论文还是成果
-    const itemType = paper.item_type || (paper.paper_id && paper.paper_id.startsWith('achievement_') ? 'achievement' : 'paper')
+    // 根据item_type判断是论文、成果还是需求
+    const itemType = paper.item_type || (
+      paper.requirement_id ? 'requirement' : 
+      (paper.paper_id && paper.paper_id.startsWith('achievement_') ? 'achievement' : 'paper')
+    )
     
-    if (itemType === 'achievement') {
+    if (itemType === 'requirement') {
+      // 需求格式
+      return {
+        id: paper.requirement_id || paper.paper_id || `req_${index}`,
+        requirement_id: paper.requirement_id || paper.paper_id,
+        title: paper.title || '无标题',
+        summary: paper.description || paper.abstract || '暂无描述',
+        matchScore: matchScore,
+        type: '需求',
+        field: paper.industry || paper.categories || '未分类',
+        industry: paper.industry || '',
+        technical_level: paper.technical_level || '',
+        market_size: paper.market_size || '',
+        pain_points: paper.pain_points || '',
+        reason: paper.reason || '',
+        match_type: paper.match_type || '',
+        vector_score: paper.vector_score || 0,
+        implementation_suggestion: paper.implementation_suggestion || ''
+      }
+    } else if (itemType === 'achievement') {
       // 成果格式
       return {
         id: `achievement_${paper.achievement_id || paper.paper_id?.replace('achievement_', '')}`,
@@ -2412,7 +2422,8 @@ const startMatch = async () => {
         paper_abstract: paperInfo.abstract || searchText.value,
         paper_categories: paperInfo.categories || '',
         top_k: 50,
-        save_match: true
+        save_match: true,
+        search_text: searchText.value  // 传递用户原始搜索文本，用于匹配历史显示
       })
 
       // 处理需求结果
@@ -2477,7 +2488,7 @@ const startMatch = async () => {
     saveMatchHistory()
     
     // 后端已经自动保存到数据库，这里显示成功消息
-    const historyId = response.data.history_id
+    const historyId = response.data.history_id || response.data.match_id  // 兼容两种字段名
     if (historyId) {
       currentHistoryId.value = historyId  // 保存当前话题的历史ID
     } else {
@@ -2947,6 +2958,18 @@ const exportPath = () => {
 // 查看合作方案
 const viewProposal = (item) => {
   if (item.type === '需求') {
+    // 保存当前状态（包含匹配结果）以便返回后恢复
+    const state = {
+      searchText: searchText.value,
+      matchMode: matchMode.value,
+      hasResults: showResults.value,
+      results: matchResults.value,  // 保存完整的匹配结果
+      timestamp: Date.now(),
+      userId: userStore.userInfo?.id || null,
+      currentHistoryId: currentHistoryId.value  // 保存历史ID
+    }
+    localStorage.setItem('smartMatchState', JSON.stringify(state))
+    
     // 跳转到需求详情页面
     router.push({
       path: `/requirement/${item.requirement_id || item.id}`,

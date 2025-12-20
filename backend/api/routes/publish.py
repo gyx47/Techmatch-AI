@@ -110,6 +110,35 @@ async def _vectorize_achievement_background(achievement_id: int, name: str, desc
     except Exception as e:
         logger.error(f"成果 {achievement_id} 向量化任务失败: {str(e)}")
 
+def _vectorize_need_sync(need_id: int, title: str, description: str, industry: str = None):
+    """同步函数：将发布需求向量化（在线程池中执行）"""
+    try:
+        vector_service = get_vector_service()
+        vector_service.add_published_need(
+            need_id=need_id,
+            title=title,
+            description=description,
+            industry=industry or ""
+        )
+        logger.info(f"发布需求 {need_id} 向量化完成")
+    except Exception as e:
+        logger.error(f"发布需求 {need_id} 向量化失败: {str(e)}")
+
+async def _vectorize_need_background(need_id: int, title: str, description: str, industry: str = None):
+    """异步后台任务：将发布需求向量化（不阻塞响应，立即开始执行）"""
+    try:
+        # 使用 asyncio.to_thread 在线程池中执行同步的向量化操作
+        await asyncio.to_thread(
+            _vectorize_need_sync,
+            need_id,
+            title,
+            description,
+            industry
+        )
+        logger.info(f"发布需求 {need_id} 向量化任务完成")
+    except Exception as e:
+        logger.error(f"发布需求 {need_id} 向量化任务失败: {str(e)}")
+
 @router.post("/achievement")
 async def publish_achievement(
     achievement: AchievementCreate,
@@ -334,6 +363,18 @@ async def publish_need(
             raise HTTPException(status_code=403, detail="只有企业用户可以发布需求")
         
         need_id = create_published_need(user['id'], need.dict())
+        
+        # 立即启动异步向量化任务（不等待响应返回，立即开始执行）
+        asyncio.create_task(
+            _vectorize_need_background(
+                need_id,
+                need.title,
+                need.description,
+                need.industry
+            )
+        )
+        logger.info(f"发布需求 {need_id} 向量化任务已启动")
+        
         return {
             "message": "需求发布成功",
             "id": need_id
@@ -403,6 +444,28 @@ async def update_need(
         if not success:
             raise HTTPException(status_code=403, detail="无权修改此需求或需求不存在")
         
+        # 更新后重新向量化（异步，不阻塞，立即开始执行）
+        # 需要获取更新后的完整数据
+        updated_need = get_published_need_by_id(need_id)
+        if updated_need:
+            # 先删除旧的向量（如果存在）
+            try:
+                vector_service = get_vector_service()
+                vector_service.delete_published_need(need_id)
+            except Exception as e:
+                logger.warning(f"删除旧向量失败（可能不存在）: {str(e)}")
+            
+            # 立即启动异步向量化任务
+            asyncio.create_task(
+                _vectorize_need_background(
+                    need_id,
+                    updated_need.get('title', ''),
+                    updated_need.get('description', ''),
+                    updated_need.get('industry')
+                )
+            )
+            logger.info(f"发布需求 {need_id} 重新向量化任务已启动")
+        
         return {"message": "需求更新成功"}
     except HTTPException:
         raise
@@ -424,6 +487,13 @@ async def delete_need(
         success = delete_published_need(need_id, user['id'])
         if not success:
             raise HTTPException(status_code=403, detail="无权删除此需求或需求不存在")
+        
+        # 从向量库删除（同步执行，因为删除操作很快）
+        try:
+            vector_service = get_vector_service()
+            vector_service.delete_published_need(need_id)
+        except Exception as e:
+            logger.warning(f"从向量库删除发布需求 {need_id} 失败（可能不存在）: {str(e)}")
         
         return {"message": "需求删除成功"}
     except HTTPException:

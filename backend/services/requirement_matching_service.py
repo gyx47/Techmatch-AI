@@ -39,7 +39,11 @@ async def match_requirements_for_paper(
         # ---------------------------------------------------------
         # 步骤 1: 查询扩展 (Query Expansion) - 与需求匹配一致
         # ---------------------------------------------------------
-        logger.info(f"原始成果: {achievement_text[:200]}...")
+        # 如果paper_title是默认值"论文"，只显示paper_abstract用于日志
+        if paper_title and paper_title.strip() and paper_title != "论文":
+            logger.info(f"原始成果: {achievement_text[:200]}...")
+        else:
+            logger.info(f"原始成果: {paper_abstract[:200]}...")
         expanded_query = await llm_service.expand_query(achievement_text)
         
         # 检查LLM是否判断输入无意义
@@ -66,38 +70,73 @@ async def match_requirements_for_paper(
         # ---------------------------------------------------------
         requirement_ids = [r[0] for r in similar_requirements]
         
+        # 区分系统需求和发布需求
+        system_requirement_ids = [rid for rid in requirement_ids if not rid.startswith("published_need_")]
+        published_need_ids = []
+        for rid in requirement_ids:
+            if rid.startswith("published_need_"):
+                try:
+                    need_id = int(rid.replace("published_need_", ""))
+                    published_need_ids.append(need_id)
+                except ValueError:
+                    logger.warning(f"无法解析发布需求ID: {rid}")
+        
         conn = get_db_connection()
         cursor = conn.cursor()
+        rows = []
         
-        # 一次性获取所有需求详情
-        placeholders = ','.join(['?'] * len(requirement_ids))
-        query = f"""
-            SELECT * FROM requirements 
-            WHERE requirement_id IN ({placeholders}) 
-            AND status = 'active'
-        """
-        cursor.execute(query, requirement_ids)
-        rows = cursor.fetchall()
+        # 查询系统需求
+        if system_requirement_ids:
+            placeholders = ','.join(['?'] * len(system_requirement_ids))
+            query = f"""
+                SELECT * FROM requirements 
+                WHERE requirement_id IN ({placeholders}) 
+                AND status = 'active'
+            """
+            cursor.execute(query, system_requirement_ids)
+            system_rows = cursor.fetchall()
+            # 转换为字典列表
+            rows.extend([dict(row) for row in system_rows])
+            logger.info(f"系统需求查询返回: {len(system_rows)} 条记录")
+        
+        # 查询发布需求
+        published_rows = []
+        if published_need_ids:
+            placeholders = ','.join(['?'] * len(published_need_ids))
+            query = f"""
+                SELECT * FROM published_needs 
+                WHERE id IN ({placeholders}) 
+                AND status = 'published'
+            """
+            cursor.execute(query, published_need_ids)
+            published_rows_raw = cursor.fetchall()
+            # 转换发布需求的字段格式，补充缺失字段
+            for row in published_rows_raw:
+                row_dict = dict(row)
+                # 转换为统一格式，补充系统需求表中的字段（发布需求没有这些字段）
+                published_rows.append({
+                    "requirement_id": f"published_need_{row_dict['id']}",  # 使用向量ID格式
+                    "title": row_dict.get("title", ""),
+                    "description": row_dict.get("description", ""),
+                    "industry": row_dict.get("industry", ""),
+                    "pain_points": "",  # 发布需求没有此字段
+                    "technical_level": "",  # 发布需求没有此字段
+                    "market_size": "",  # 发布需求没有此字段
+                })
+            logger.info(f"发布需求查询返回: {len(published_rows)} 条记录")
+        
         conn.close()
         
-        logger.info(f"数据库查询返回: {len(rows)} 条记录")
+        # 合并结果
+        all_rows = rows + published_rows
+        logger.info(f"数据库查询返回总计: {len(all_rows)} 条记录")
         
-        if not rows:
+        if not all_rows:
             logger.warning("数据库未找到对应的需求记录")
-            # 检查需求表是否存在数据
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) as total FROM requirements WHERE status = 'active'")
-                total = cursor.fetchone()["total"]
-                conn.close()
-                logger.info(f"需求表活跃需求总数: {total}")
-            except Exception as e:
-                logger.error(f"检查需求表失败: {e}")
             return []
         
         # 构建详细列表，保持顺序
-        row_dict = {row["requirement_id"]: row for row in rows}
+        row_dict = {row["requirement_id"]: row for row in all_rows}
         requirement_details = []
         
         for rid, vec_score in similar_requirements:
@@ -105,12 +144,12 @@ async def match_requirements_for_paper(
                 row = row_dict[rid]
                 requirement_details.append({
                     "requirement_id": rid,
-                    "title": row["title"],
-                    "description": row["description"],
-                    "industry": row["industry"],
-                    "pain_points": row["pain_points"],
-                    "technical_level": row["technical_level"],
-                    "market_size": row["market_size"],
+                    "title": row.get("title", ""),
+                    "description": row.get("description", ""),
+                    "industry": row.get("industry", ""),
+                    "pain_points": row.get("pain_points") or "",  # 发布需求为空字符串
+                    "technical_level": row.get("technical_level") or "",  # 发布需求为空字符串
+                    "market_size": row.get("market_size") or "",  # 发布需求为空字符串
                     "vector_score": vec_score
                 })
         

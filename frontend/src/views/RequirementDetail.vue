@@ -41,14 +41,6 @@
                 <p class="description">{{ requirementData.description }}</p>
               </div>
               
-              <!-- 痛点分析 -->
-              <div class="panel" v-if="requirementData.pain_points">
-                <h3>痛点分析</h3>
-                <div class="pain-points">
-                  <pre>{{ requirementData.pain_points }}</pre>
-                </div>
-              </div>
-              
               <!-- AI匹配分析 -->
               <div class="panel" v-if="requirementData.reason">
                 <h3>AI匹配分析</h3>
@@ -207,11 +199,28 @@ const loadRequirementData = async () => {
       console.log('需求详情数据:', response.data)
       requirementData.value = response.data
       console.log('需求信息:', requirementData.value)
-      requirementData.value.score = parseFloat(route.query.match_score)
-      console.log('需求分数', parseFloat(route.query.match_score))
+      
+      // 从路由query参数中获取匹配相关信息（这些信息来自SmartMatch页面）
+      if (route.query.match_score) {
+        requirementData.value.score = parseFloat(route.query.match_score)
+      }
+      if (route.query.reason) {
+        requirementData.value.reason = route.query.reason
+      }
+      if (route.query.match_type) {
+        requirementData.value.match_type = route.query.match_type
+      }
+      if (route.query.implementation_suggestion) {
+        requirementData.value.implementation_suggestion = route.query.implementation_suggestion
+      }
+      if (route.query.vector_score) {
+        requirementData.value.vector_score = parseFloat(route.query.vector_score)
+      }
+      console.log('需求分数', requirementData.value.score)
 
-      // 如果没有AI评分理由，尝试获取或生成
-      if (!requirementData.value.reason) {
+      // 如果路由参数中已经有reason等字段，就不需要再调用API生成了（避免加载慢）
+      // 只有在确实没有这些信息时才生成
+      if (!requirementData.value.reason && route.query.search_text) {
         console.log('尝试生成匹配理由...')
         await generateMatchingReason()
       }
@@ -488,21 +497,13 @@ ${paperInfo.value ? `论文标题：${paperInfo.value.title}` : '相关技术方
   border-bottom: 1px solid #eee;
 }
 
-.description, .pain-points {
+.description {
   color: #666;
   line-height: 1.8;
   font-size: 14px;
   margin: 0;
 }
 
-.pain-points pre {
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  font-family: inherit;
-  margin: 0;
-  color: #666;
-  line-height: 1.6;
-}
 
 .match-analysis {
   margin-top: 16px;

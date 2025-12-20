@@ -9,7 +9,7 @@ import threading
 from api.routes.auth import get_current_user_optional as get_current_user
 from services.matching_service import match_papers, match_all
 from services.vector_service import get_vector_service
-from database.database import get_db_connection, get_user_by_username, save_match_history, get_match_history, get_match_results_by_history_id
+from database.database import get_db_connection, get_user_by_username, save_match_history, get_match_history, get_match_results_by_history_id, get_published_need_by_id
 import logging
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class PaperToRequirementRequest(BaseModel):
     paper_categories: Optional[str] = ""  # 论文分类
     top_k: int = 20  # 返回的需求数量
     save_match: bool = True  # 是否保存匹配记录
+    search_text: Optional[str] = ""  # 用户原始搜索文本（用于匹配历史）
 
 class RequirementResponse(BaseModel):
     requirement_id: str
@@ -96,42 +97,53 @@ async def match_paper_to_requirements(
             top_k=request.top_k
         )
         
-        match_id = None
+        history_id = None
         
-        # 保存匹配记录
+        # 保存匹配历史（使用save_match_history，与找成果保持一致）
         if request.save_match and results:
             try:
                 user = get_user_by_username(current_user)
                 user_id = user["id"] if user else None
                 
-                # 保存到新的匹配表
-                conn = get_db_connection()
-                cursor = conn.cursor()
+                # 构建搜索描述（优先使用用户原始搜索文本，如果没有则使用论文标题）
+                search_desc = request.search_text if request.search_text and request.search_text.strip() else (
+                    request.paper_title if request.paper_title and request.paper_title.strip() and request.paper_title != "论文" else "成果匹配需求"
+                )
                 
-                cursor.execute("""
-                    INSERT INTO paper_to_requirement_matches 
-                    (user_id, paper_id, paper_title, requirement_ids, match_count)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    user_id,
-                    "custom_paper",  # 如果没有arxiv_id
-                    request.paper_title[:100],
-                    ",".join([r["requirement_id"] for r in results]),
-                    len(results)
-                ))
+                # 将需求结果转换为match_results格式（需要适配save_match_history的格式）
+                # save_match_history期望results包含title, abstract, score, reason, match_type等字段
+                formatted_results = []
+                for req in results:
+                    formatted_results.append({
+                        "paper_id": req.get("requirement_id"),  # 使用requirement_id作为标识
+                        "title": req.get("title", ""),
+                        "abstract": req.get("description", ""),  # description映射到abstract
+                        "authors": "",  # 需求没有作者
+                        "categories": req.get("industry", ""),  # industry映射到categories
+                        "pdf_url": None,  # 需求没有PDF
+                        "published_date": None,
+                        "score": req.get("score", 0),
+                        "reason": req.get("reason", ""),
+                        "match_type": req.get("match_type", ""),
+                        "vector_score": req.get("vector_score", 0.0)
+                    })
                 
-                match_id = cursor.lastrowid
-                conn.commit()
-                conn.close()
-                
-                logger.info(f"论文→需求匹配记录已保存，ID: {match_id}")
+                # 使用save_match_history保存，match_mode设为"researcher"（找需求）
+                history_id = save_match_history(
+                    user_id=user_id,
+                    search_desc=search_desc,
+                    match_mode="researcher",  # 找需求
+                    results=formatted_results
+                )
+                logger.info(f"匹配历史已保存，历史ID: {history_id}")
             except Exception as e:
-                logger.error(f"保存匹配记录失败: {e}")
+                # 保存历史失败不影响匹配结果返回
+                logger.error(f"保存匹配历史失败: {e}")
         
         return {
             "requirements": results,
             "total": len(results),
-            "match_id": match_id
+            "history_id": history_id
         }
         
     except Exception as e:
@@ -290,25 +302,61 @@ async def get_requirement_detail(
     requirement_id: str,
     current_user: str = Depends(get_current_user)
 ):
-    """获取需求详情"""
+    """获取需求详情（支持系统需求和发布需求）"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        requirement_dict = None
         
-        # 获取需求基本信息
-        cursor.execute("""
-            SELECT * FROM requirements 
-            WHERE requirement_id = ? AND status = 'active'
-        """, (requirement_id,))
-        
-        requirement = cursor.fetchone()
-        conn.close()
-        
-        if not requirement:
-            raise HTTPException(status_code=404, detail="需求不存在")
-        
-        # 转换为字典
-        requirement_dict = dict(requirement)
+        # 判断是发布需求还是系统需求
+        if requirement_id.startswith("published_need_"):
+            # 发布需求：从 published_needs 表查询
+            try:
+                need_id = int(requirement_id.replace("published_need_", ""))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="无效的需求ID格式")
+            
+            need = get_published_need_by_id(need_id)
+            if not need:
+                raise HTTPException(status_code=404, detail="需求不存在")
+            
+            # 转换为统一格式，补充系统需求表的字段（发布需求没有这些字段）
+            requirement_dict = {
+                "requirement_id": requirement_id,  # 使用向量ID格式
+                "title": need.get("title", ""),
+                "description": need.get("description", ""),
+                "industry": need.get("industry", ""),
+                "pain_points": "",  # 发布需求没有此字段
+                "technical_level": "",  # 发布需求没有此字段
+                "market_size": "",  # 发布需求没有此字段
+                "contact_info": f"{need.get('contact_name', '')} {need.get('contact_phone', '')}".strip() or need.get("contact_email", ""),
+                "source": "published",  # 标记为发布需求
+                "company_name": need.get("company_name", ""),
+                "contact_name": need.get("contact_name", ""),
+                "contact_phone": need.get("contact_phone", ""),
+                "contact_email": need.get("contact_email", ""),
+                "urgency_level": need.get("urgency_level", ""),
+                "budget_range": need.get("budget_range", ""),
+                "status": need.get("status", "published"),
+                "created_at": need.get("created_at"),
+                "updated_at": need.get("updated_at")
+            }
+        else:
+            # 系统需求：从 requirements 表查询
+            cursor.execute("""
+                SELECT * FROM requirements 
+                WHERE requirement_id = ? AND status = 'active'
+            """, (requirement_id,))
+            
+            requirement = cursor.fetchone()
+            conn.close()
+            
+            if not requirement:
+                raise HTTPException(status_code=404, detail="需求不存在")
+            
+            # 转换为字典
+            requirement_dict = dict(requirement)
+            requirement_dict["source"] = "system"  # 标记为系统需求
         
         return requirement_dict
         
@@ -634,11 +682,14 @@ async def get_match_history_results(
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM match_history WHERE id = ? AND user_id = ?", (history_id, user_id))
-        history = cursor.fetchone()
+        history_row = cursor.fetchone()
         conn.close()
         
-        if not history:
+        if not history_row:
             raise HTTPException(status_code=404, detail="匹配历史不存在或无权限访问")
+        
+        # 转换为字典
+        history = dict(history_row)
         
         # 获取匹配结果
         results = get_match_results_by_history_id(history_id)
@@ -655,17 +706,34 @@ async def get_match_history_results(
             }
         
         # 转换为前端需要的格式
-        # 需要区分论文和成果：通过paper_id格式判断
-        # 如果paper_id以"achievement_"开头，说明是成果，需要查询published_achievements表
+        # 需要区分论文、成果和需求：
+        # 1. 如果match_mode是"researcher"（找需求），paper_id是requirement_id，需要查询requirements表
+        # 2. 如果paper_id以"achievement_"开头，说明是成果，需要查询published_achievements表
+        # 3. 否则是论文
         papers = []
+        achievement_ids_to_fetch = []
+        achievement_result_map = {}
+        requirement_ids_to_fetch = []
+        requirement_result_map = {}
+        
+        is_researcher_mode = history.get("match_mode") == "researcher"
+        
+        # 先收集需要查询的ID，同时保留原始顺序
+        requirement_ids_to_fetch = []
+        requirement_result_map = {}
         achievement_ids_to_fetch = []
         achievement_result_map = {}
         
         for result in results:
             paper_id = result.get("paper_id")
             
+            # 如果是找需求模式，paper_id实际是requirement_id
+            if is_researcher_mode:
+                requirement_id = paper_id
+                requirement_ids_to_fetch.append(requirement_id)
+                requirement_result_map[requirement_id] = result
             # 判断是成果还是论文
-            if paper_id and paper_id.startswith("achievement_"):
+            elif paper_id and paper_id.startswith("achievement_"):
                 # 这是成果，提取achievement_id
                 try:
                     achievement_id = int(paper_id.replace("achievement_", ""))
@@ -675,7 +743,7 @@ async def get_match_history_results(
                     logger.warning(f"无法解析成果ID: {paper_id}")
                     continue
             else:
-                # 这是论文
+                # 这是论文，直接添加（保持原有顺序）
                 papers.append({
                     "paper_id": paper_id,
                     "title": result.get("title"),
@@ -691,6 +759,85 @@ async def get_match_history_results(
                     "item_type": "paper"  # 标记为论文
                 })
         
+        # 如果是找需求模式，需要查询requirements表和published_needs表获取完整信息
+        if requirement_ids_to_fetch:
+            # 区分系统需求和发布需求
+            system_requirement_ids = [rid for rid in requirement_ids_to_fetch if not rid.startswith("published_need_")]
+            published_need_ids = []
+            for rid in requirement_ids_to_fetch:
+                if rid.startswith("published_need_"):
+                    try:
+                        need_id = int(rid.replace("published_need_", ""))
+                        published_need_ids.append(need_id)
+                    except ValueError:
+                        logger.warning(f"无法解析发布需求ID: {rid}")
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            requirement_dict = {}  # 使用字典来存储查询结果，方便按ID查找
+            
+            # 查询系统需求
+            if system_requirement_ids:
+                placeholders = ','.join(['?'] * len(system_requirement_ids))
+                query = f"SELECT * FROM requirements WHERE requirement_id IN ({placeholders}) AND status = 'active'"
+                cursor.execute(query, system_requirement_ids)
+                system_requirements = cursor.fetchall()
+                for req in system_requirements:
+                    req_dict = dict(req)
+                    requirement_dict[req_dict["requirement_id"]] = req_dict
+            
+            # 查询发布需求
+            if published_need_ids:
+                placeholders = ','.join(['?'] * len(published_need_ids))
+                query = f"SELECT * FROM published_needs WHERE id IN ({placeholders}) AND status = 'published'"
+                cursor.execute(query, published_need_ids)
+                published_needs_raw = cursor.fetchall()
+                # 转换发布需求的字段格式
+                for need in published_needs_raw:
+                    need_dict = dict(need)
+                    requirement_id = f"published_need_{need_dict['id']}"
+                    requirement_dict[requirement_id] = {
+                        "requirement_id": requirement_id,
+                        "title": need_dict.get("title", ""),
+                        "description": need_dict.get("description", ""),
+                        "industry": need_dict.get("industry", ""),
+                        "pain_points": "",  # 发布需求没有此字段
+                        "technical_level": "",  # 发布需求没有此字段
+                        "market_size": "",  # 发布需求没有此字段
+                        "_source": "published_need"
+                    }
+            
+            conn.close()
+            
+            # 按照 requirement_ids_to_fetch 的顺序（即 result_order 的顺序）来构建结果
+            for requirement_id in requirement_ids_to_fetch:
+                requirement = requirement_dict.get(requirement_id)
+                result = requirement_result_map.get(requirement_id)
+                if not requirement or not result:
+                    continue
+                
+                papers.append({
+                    "paper_id": requirement_id,  # 使用requirement_id作为paper_id（兼容前端）
+                    "item_type": "requirement",  # 标记为需求
+                    "requirement_id": requirement_id,
+                    "title": requirement.get("title") or "",
+                    "description": requirement.get("description") or "",
+                    "abstract": requirement.get("description") or "",  # 兼容前端，使用abstract字段
+                    "industry": requirement.get("industry") or "",
+                    "categories": requirement.get("industry") or "",  # 兼容前端，使用categories字段
+                    "technical_level": requirement.get("technical_level") or "",
+                    "market_size": requirement.get("market_size") or "",
+                    "pain_points": requirement.get("pain_points") or "",
+                    "pdf_url": None,  # 需求没有PDF
+                    "authors": "",  # 需求没有作者
+                    "published_date": None,
+                    "score": result.get("score"),
+                    "reason": result.get("reason"),
+                    "match_type": result.get("match_type"),
+                    "vector_score": result.get("vector_score"),
+                    "implementation_suggestion": result.get("implementation_suggestion")
+                })
+        
         # 如果有成果，需要查询published_achievements表获取完整信息
         if achievement_ids_to_fetch:
             conn = get_db_connection()
@@ -698,14 +845,19 @@ async def get_match_history_results(
             placeholders = ','.join(['?'] * len(achievement_ids_to_fetch))
             query = f"SELECT * FROM published_achievements WHERE id IN ({placeholders}) AND status = 'published'"
             cursor.execute(query, achievement_ids_to_fetch)
-            achievements = cursor.fetchall()
+            achievements_raw = cursor.fetchall()
             conn.close()
             
-            # 将成果转换为前端格式
-            for achievement in achievements:
-                achievement_id = achievement["id"]
+            # 转换为字典，方便按ID查找
+            achievement_dict = {}
+            for achievement in achievements_raw:
+                achievement_dict[achievement["id"]] = dict(achievement)
+            
+            # 按照 achievement_ids_to_fetch 的顺序（即 result_order 的顺序）来构建结果
+            for achievement_id in achievement_ids_to_fetch:
+                achievement = achievement_dict.get(achievement_id)
                 result = achievement_result_map.get(achievement_id)
-                if not result:
+                if not achievement or not result:
                     continue
                 
                 # 解析cooperation_mode JSON字段

@@ -236,6 +236,74 @@ class VectorService:
             logger.error(f"添加需求失败: {e}")
             return False
     
+    def add_published_need(self, need_id: int, title: str, description: str, 
+                          industry: str = "") -> bool:
+        """
+        将用户发布的需求添加到向量数据库
+        need_id: 发布需求的数据库ID
+        title: 需求标题
+        description: 需求描述
+        industry: 行业领域
+        注意：published_needs 表没有 pain_points 字段，所以不包含在向量化文本中
+        返回: True 如果成功添加，False 如果已存在
+        """
+        try:
+            # 使用前缀避免与系统需求ID冲突
+            vector_id = f"published_need_{need_id}"
+            
+            # 先检查是否已存在
+            try:
+                results = self.requirement_collection.get(ids=[vector_id])
+                if results and results.get('ids') and len(results['ids']) > 0:
+                    logger.debug(f"发布需求 {need_id} 已存在于向量数据库，跳过")
+                    return False
+            except Exception:
+                pass  # 不存在，继续添加
+            
+            # 组合文本：标题 + 描述 + 行业（注意：没有pain_points字段）
+            text_parts = [title]
+            if description:
+                text_parts.append(description)
+            if industry:
+                text_parts.append(f"行业:{industry}")
+            text = "\n".join(text_parts)
+            
+            # 生成向量
+            embedding = self.embed_text(text)
+            
+            # 存储到需求集合
+            self.requirement_collection.add(
+                embeddings=[embedding],
+                ids=[vector_id],
+                metadatas=[{
+                    "title": title,
+                    "description": description[:500] if description else "",
+                    "industry": industry,
+                    "status": "active",
+                    "type": "published_need"
+                }]
+            )
+            logger.info(f"发布需求 {need_id} 已添加到向量数据库")
+            return True
+        except Exception as e:
+            logger.error(f"添加发布需求 {need_id} 到向量数据库失败: {str(e)}")
+            raise
+    
+    def delete_published_need(self, need_id: int) -> bool:
+        """
+        从向量数据库删除用户发布的需求
+        need_id: 发布需求的数据库ID
+        返回: True 如果成功删除，False 如果不存在
+        """
+        try:
+            vector_id = f"published_need_{need_id}"
+            self.requirement_collection.delete(ids=[vector_id])
+            logger.info(f"发布需求 {need_id} 已从向量数据库删除")
+            return True
+        except Exception as e:
+            logger.warning(f"删除发布需求 {need_id} 从向量数据库失败（可能不存在）: {str(e)}")
+            return False
+    
     def add_achievement(self, achievement_id: int, name: str, description: str, application: str = None, field: str = None) -> bool:
         """
         将发布的成果添加到向量数据库（与论文共用同一个 collection）
