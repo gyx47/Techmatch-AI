@@ -1,7 +1,7 @@
 """
 后端API接口 - 需求详情和匹配理由生成
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import json
@@ -9,6 +9,7 @@ import logging
 
 from api.routes.auth import get_current_user_optional as get_current_user
 from services.llm_service import get_llm_service
+from database.database import get_requirements_by_query_paginated, get_db_connection
 
 
 router = APIRouter()
@@ -425,4 +426,19 @@ async def get_paper_detail(paper_id: str):
     except Exception as e:
         logger.error(f"获取论文详情失败: {e}")
         raise HTTPException(status_code=500, detail="获取论文详情失败")
+
+@router.get("/list")
+async def get_requirements_list(
+    query: str = Query("", description="搜索关键词（可选）"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    current_user: str = Depends(get_current_user)
+):
+    """获取系统生成的需求列表（分页、搜索）"""
+    try:
+        result = get_requirements_by_query_paginated(query, page, page_size)
+        return result
+    except Exception as e:
+        logger.error(f"获取需求列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取需求列表失败: {str(e)}")
     

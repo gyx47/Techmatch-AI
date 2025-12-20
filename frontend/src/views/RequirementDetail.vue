@@ -233,7 +233,9 @@ const loadRequirementData = async () => {
     }
   } catch (error) {
     console.error('加载需求详情失败:', error)
-    ElMessage.error('加载需求详情失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('加载需求详情失败: ' + (error.response?.data?.detail || error.message))
+    }
     
     // 失败时使用路由参数
     requirementData.value = {

@@ -422,7 +422,9 @@ const submitAchievement = async () => {
       // 重置表单字段的验证状态
       achievementFormRef.value.resetFields()
     } catch (error) {
-      ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
+      if (!error._handled) {
+        ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
+      }
     } finally {
       submitting.value = false
     }
@@ -466,7 +468,9 @@ const submitNeed = async () => {
       // 重置表单字段的验证状态
       needFormRef.value.resetFields()
     } catch (error) {
-      ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
+      if (!error._handled) {
+        ElMessage.error('发布失败: ' + (error.response?.data?.detail || error.message || '未知错误'))
+      }
     } finally {
       submitting.value = false
     }

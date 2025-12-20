@@ -123,8 +123,9 @@ class VectorService:
                 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
                 
                 from sentence_transformers import SentenceTransformer
+                logger.info(f"开始加载向量模型: {self._model_name} (延迟加载)")
                 self.model = SentenceTransformer(self._model_name)
-                logger.info("向量模型加载完成")
+                logger.info(f"向量模型加载完成: {self._model_name}")
             except ImportError as e:
                 logger.error(f"无法导入 sentence_transformers: {e}")
                 raise ImportError(
@@ -156,11 +157,13 @@ class VectorService:
                         "详细错误: " + error_msg
                     )
                 raise
+        else:
+            logger.debug(f"向量模型已加载，跳过加载步骤")
     
     def embed_text(self, text: str) -> List[float]:
         """将文本转换为向量"""
-        self._load_model()
-        embedding = self.model.encode(text, convert_to_numpy=True)
+        self._load_model()  # 如果模型未加载，这里会加载
+        embedding = self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
         return embedding.tolist()
     
     def add_paper(self, paper_id: str, title: str, abstract: str) -> bool:
@@ -372,27 +375,69 @@ class VectorService:
 
     def search_requirements(self, query_text: str, top_k: int = 50) -> List[Tuple[str, float]]:
         """
-        搜索相似需求
+        搜索相似需求（完全复用search_similar的逻辑，只改变集合）
+        返回: [(requirement_id, similarity_score), ...]
         """
         try:
+            # 将查询文本转换为向量（复用search_similar的embed_text调用）
             query_embedding = self.embed_text(query_text)
             
+            # 在 ChromaDB 中搜索（与search_similar完全一致的查询方式）
             results = self.requirement_collection.query(
                 query_embeddings=[query_embedding],
-                n_results=top_k,
-                where={"status": "active"}  # 只搜索活跃需求
+                n_results=top_k
             )
             
+            # 提取结果（与search_similar完全一致的处理方式）
             requirement_ids = results['ids'][0]
             distances = results['distances'][0]
             
-            # 将距离转换为相似度
+            # 将距离转换为相似度分数（cosine distance -> similarity）
+            # cosine distance = 1 - cosine similarity
             similarities = [(rid, 1 - dist) for rid, dist in zip(requirement_ids, distances)]
             
+            logger.info(f"找到 {len(similarities)} 个相似需求")
+            
             return similarities
+            
         except Exception as e:
-            logger.error(f"需求搜索失败: {e}")
-            return []
+            error_msg = str(e)
+            logger.error(f"需求搜索失败: {error_msg}")
+            
+            # 检查是否是 ChromaDB 索引文件损坏的错误（与search_similar保持一致）
+            if 'Cannot open header file' in error_msg or 'header file' in error_msg.lower():
+                logger.error("=" * 60)
+                logger.error("检测到 ChromaDB 索引文件损坏错误（需求集合）")
+                logger.error("=" * 60)
+                logger.error("")
+                logger.error("可能的原因：")
+                logger.error("  1. ChromaDB 数据库文件损坏")
+                logger.error("  2. HNSW 索引文件损坏")
+                logger.error("  3. ChromaDB 版本不兼容")
+                logger.error("  4. 数据库文件被其他进程占用")
+                logger.error("")
+                logger.error("当前集合状态：")
+                try:
+                    count = self.requirement_collection.count()
+                    logger.error(f"  - 集合中的需求数量: {count}")
+                except Exception as count_err:
+                    logger.error(f"  - 无法获取集合状态: {count_err}")
+                logger.error("")
+                logger.error("解决方案（按顺序尝试）：")
+                logger.error("  1. 重启服务，可能是临时文件锁定问题")
+                logger.error("  2. 运行修复脚本: python backend/scripts/fix_chromadb.py")
+                logger.error("  3. 手动删除 chroma_db 目录并重新索引")
+                logger.error("  4. 检查 ChromaDB 版本兼容性")
+                logger.error("")
+                logger.error("注意：不要自动删除集合，这会导致数据丢失！")
+                logger.error("=" * 60)
+                
+                raise RuntimeError(
+                    "ChromaDB 索引文件损坏（需求集合）。请使用修复脚本或手动删除 chroma_db 目录后重新索引。"
+                    f"详细错误: {error_msg}"
+                )
+            
+            raise
     
     def get_paper_count(self) -> int:
         """获取向量数据库中的论文数量"""

@@ -227,7 +227,9 @@ const handleSearch = async () => {
     papers.value = response.data
     ElMessage.success(`找到 ${papers.value.length} 篇论文`)
   } catch (error) {
-    ElMessage.error('搜索失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('搜索失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     searching.value = false
   }
@@ -253,7 +255,9 @@ const searchLocal = async () => {
     papers.value = response.data
     ElMessage.success(`本地数据库找到 ${papers.value.length} 篇论文`)
   } catch (error) {
-    ElMessage.error('本地搜索失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('本地搜索失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     localSearching.value = false
   }
@@ -279,7 +283,9 @@ const summarizePaper = async (paper) => {
     
     paperSummary.value = response.data
   } catch (error) {
-    ElMessage.error('生成摘要失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('生成摘要失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     summarizing.value = ''
   }

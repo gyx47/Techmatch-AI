@@ -223,15 +223,15 @@
                   </div>
                   <p class="card-description">{{ item.description }}</p>
                   <div class="card-meta">
-                    <span class="meta-item">
+                    <span class="meta-item" v-if="item.company_name">
                       <el-icon><OfficeBuilding /></el-icon>
                       {{ item.company_name }}
                     </span>
-                    <span class="meta-item">
+                    <span class="meta-item" v-if="item.industry">
                       <el-icon><Collection /></el-icon>
                       {{ item.industry }}
                     </span>
-                    <span class="meta-item">
+                    <span class="meta-item" v-if="item.publish_time">
                       <el-icon><Clock /></el-icon>
                       {{ formatLocalTime(item.publish_time) }}
                     </span>
@@ -350,7 +350,9 @@
             <div class="detail-section">
               <h3 class="detail-title">{{ currentItem.title }}</h3>
               <div class="detail-tag">
-                <el-tag type="primary" size="small">用户发布</el-tag>
+                <el-tag :type="currentItem.data_source === '用户发布' ? 'primary' : 'info'" size="small">
+                  {{ currentItem.data_source }}
+                </el-tag>
               </div>
             </div>
             <div class="detail-section">
@@ -358,39 +360,65 @@
               <p class="section-content">{{ currentItem.description }}</p>
             </div>
             <div class="detail-section">
-              <h4 class="section-title">企业信息</h4>
-              <p class="section-content">
-                <strong>公司名称：</strong>{{ currentItem.company_name }}<br />
-                <strong>所属行业：</strong>{{ currentItem.industry }}
-              </p>
+              <h4 class="section-title">所属行业</h4>
+              <p class="section-content">{{ currentItem.industry }}</p>
             </div>
-            <div class="detail-section" v-if="currentItem.urgency_level">
-              <h4 class="section-title">紧急程度</h4>
-              <p class="section-content">{{ currentItem.urgency_level }}</p>
-            </div>
-            <div class="detail-section" v-if="currentItem.cooperation_preference && currentItem.cooperation_preference.length > 0">
-              <h4 class="section-title">合作方式偏好</h4>
-              <p class="section-content">
-                <el-tag v-for="pref in currentItem.cooperation_preference" :key="pref" style="margin-right: 8px;">
-                  {{ pref }}
-                </el-tag>
-              </p>
-            </div>
-            <div class="detail-section" v-if="currentItem.budget_range">
-              <h4 class="section-title">预算范围</h4>
-              <p class="section-content">{{ currentItem.budget_range }}</p>
-            </div>
+            
+            <!-- AI生成的需求特有字段 -->
+            <template v-if="currentItem.type === 'requirement' && currentItem.raw_data">
+              <div class="detail-section" v-if="currentItem.raw_data.pain_points">
+                <h4 class="section-title">核心痛点</h4>
+                <p class="section-content">{{ currentItem.raw_data.pain_points }}</p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.technical_level">
+                <h4 class="section-title">技术难度</h4>
+                <p class="section-content">{{ currentItem.raw_data.technical_level }}</p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.market_size">
+                <h4 class="section-title">市场规模</h4>
+                <p class="section-content">{{ currentItem.raw_data.market_size }}</p>
+              </div>
+            </template>
+            
+            <!-- 用户发布的需求特有字段 -->
+            <template v-else-if="currentItem.type === 'published_need' && currentItem.raw_data">
+              <div class="detail-section">
+                <h4 class="section-title">企业信息</h4>
+                <p class="section-content">
+                  <strong>公司名称：</strong>{{ currentItem.company_name || currentItem.raw_data.company_name }}<br />
+                </p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.urgency_level">
+                <h4 class="section-title">紧急程度</h4>
+                <p class="section-content">{{ currentItem.raw_data.urgency_level }}</p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.cooperation_preference && currentItem.raw_data.cooperation_preference.length > 0">
+                <h4 class="section-title">合作方式偏好</h4>
+                <p class="section-content">
+                  <el-tag v-for="pref in currentItem.raw_data.cooperation_preference" :key="pref" style="margin-right: 8px;">
+                    {{ pref }}
+                  </el-tag>
+                </p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.budget_range">
+                <h4 class="section-title">预算范围</h4>
+                <p class="section-content">{{ currentItem.raw_data.budget_range }}</p>
+              </div>
+            </template>
+            
             <div class="detail-section">
               <h4 class="section-title">发布时间</h4>
               <p class="section-content">{{ formatLocalTime(currentItem.publish_time) }}</p>
             </div>
-            <div class="detail-section">
+            
+            <!-- 联系方式（仅用户发布的需求显示） -->
+            <div class="detail-section" v-if="currentItem.type === 'published_need' && currentItem.raw_data">
               <el-divider />
               <h4 class="section-title">联系方式</h4>
               <div class="contact-info">
-                <p><strong>联系人：</strong>{{ currentItem.contact_name }}</p>
-                <p><strong>联系电话：</strong>{{ currentItem.contact_phone }}</p>
-                <p v-if="currentItem.contact_email"><strong>联系邮箱：</strong>{{ currentItem.contact_email }}</p>
+                <p><strong>联系人：</strong>{{ currentItem.raw_data.contact_name }}</p>
+                <p><strong>联系电话：</strong>{{ currentItem.raw_data.contact_phone }}</p>
+                <p v-if="currentItem.raw_data.contact_email"><strong>联系邮箱：</strong>{{ currentItem.raw_data.contact_email }}</p>
               </div>
             </div>
           </template>
@@ -643,7 +671,9 @@ const loadAchievements = async () => {
     achievementTotal.value = paperTotal.value + publishedAchievementTotal.value
     paginatedAchievements.value = allAchievements
   } catch (error) {
-    ElMessage.error('加载成果数据失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('加载成果数据失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     loadingAchievements.value = false
   }
@@ -700,29 +730,82 @@ const handleNeedSearch = () => {
   loadNeeds()
 }
 
-// 加载需求数据
+// 加载需求数据（合并系统生成和用户发布的需求）
 const loadNeeds = async () => {
   loadingNeeds.value = true
   try {
-    const response = await api.get('/publish/needs', {
-      params: { 
-        page: needPage.value, 
-        page_size: needPageSize.value,
-        keyword: needSearchQuery.value || undefined
+    const allNeeds = []
+    
+    // 1. 获取系统生成的需求（requirements表）
+    try {
+      const requirementsResponse = await api.get('/requirements/list', {
+        params: {
+          query: needSearchQuery.value || '',
+          page: needPage.value,
+          page_size: needPageSize.value
+        }
+      })
+      if (requirementsResponse.data && requirementsResponse.data.items) {
+        requirementsResponse.data.items.forEach(req => {
+          allNeeds.push({
+            id: `req_${req.requirement_id}`,
+            type: 'requirement',
+            data_source: 'AI生成',
+            title: req.title,
+            description: req.description,
+            industry: req.industry,
+            company_name: req.contact_info ? req.contact_info.split('@')[0] : '未知',
+            publish_time: req.created_at || req.published_date,
+            raw_data: req
+          })
+        })
       }
-    })
-    if (response.data) {
-      needTotal.value = response.data.total || 0
-      if (response.data.items) {
-        paginatedNeeds.value = response.data.items.map(need => ({
-          ...need,
-          data_source: '用户发布',
-          publish_time: need.created_at
-        }))
-      }
+    } catch (error) {
+      console.error('加载系统生成需求失败:', error)
     }
+    
+    // 2. 获取用户发布的需求（published_needs表）
+    try {
+      const publishedNeedsResponse = await api.get('/publish/needs', {
+        params: {
+          page: needPage.value,
+          page_size: needPageSize.value,
+          keyword: needSearchQuery.value || undefined
+        }
+      })
+      if (publishedNeedsResponse.data && publishedNeedsResponse.data.items) {
+        publishedNeedsResponse.data.items.forEach(need => {
+          allNeeds.push({
+            id: `need_${need.id}`,
+            type: 'published_need',
+            data_source: '用户发布',
+            title: need.title,
+            description: need.description,
+            industry: need.industry,
+            company_name: need.company_name,
+            publish_time: need.created_at,
+            raw_data: need
+          })
+        })
+      }
+    } catch (error) {
+      console.error('加载用户发布需求失败:', error)
+    }
+    
+    // 3. 按时间排序
+    allNeeds.sort((a, b) => {
+      const timeA = new Date(a.publish_time || 0).getTime()
+      const timeB = new Date(b.publish_time || 0).getTime()
+      return timeB - timeA
+    })
+    
+    // 4. 设置分页数据
+    needTotal.value = allNeeds.length
+    paginatedNeeds.value = allNeeds
   } catch (error) {
-    ElMessage.error('加载需求数据失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('加载需求数据失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     loadingNeeds.value = false
   }
@@ -925,7 +1008,9 @@ const stopCrawler = async () => {
     // 立即检查状态
     await checkCrawlerStatus()
   } catch (error) {
-    ElMessage.error('停止爬虫失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('停止爬虫失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     stopping.value = false
   }
@@ -963,7 +1048,9 @@ const startCrawler = async () => {
       loadVectorStats()
     }, 5000)
   } catch (error) {
-    ElMessage.error('启动爬虫失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('启动爬虫失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     crawling.value = false
   }
@@ -1009,7 +1096,9 @@ const startIndexing = async () => {
     }, 2000)
     
   } catch (error) {
-    ElMessage.error('启动向量化任务失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('启动向量化任务失败: ' + (error.response?.data?.detail || error.message))
+    }
     indexing.value = false
   }
 }

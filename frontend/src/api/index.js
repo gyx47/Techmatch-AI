@@ -38,7 +38,21 @@ api.interceptors.response.use(
       switch (status) {
         case 401:
           {
-            // 当前用户凭证无效：统一登出并禁止继续使用功能
+            // 对于登录、注册、修改密码等接口，401是业务错误，不应该触发全局登出
+            // 这些接口的401错误应该由业务代码自己处理，显示具体的错误信息
+            const requestUrl = error.config?.url || ''
+            const isAuthEndpoint = requestUrl.includes('/auth/login') || 
+                                   requestUrl.includes('/auth/register') ||
+                                   requestUrl.includes('/auth/change-password')
+            
+            if (isAuthEndpoint) {
+              // 认证相关的接口：不显示全局401错误，让业务代码处理
+              // 直接返回错误，让业务代码显示具体的错误信息
+              return Promise.reject(error)
+            }
+            
+            // 其他接口的401：当前用户凭证无效，统一登出并禁止继续使用功能
+            error._handled = true  // 标记为已处理
             const userStore = useUserStore()
             userStore.logout()
 
@@ -52,26 +66,43 @@ api.interceptors.response.use(
             }
           }
           break
+        case 400:
+          {
+            // 400错误通常是业务逻辑错误，应该由业务代码处理
+            // 对于认证相关的接口，让业务代码处理；其他接口也由业务代码处理（显示具体错误）
+            // 不在拦截器中显示，避免重复
+            return Promise.reject(error)
+          }
         case 403:
+          // 权限错误：标记为已处理，业务代码不应再显示
+          error._handled = true
           ElMessage.error('权限不足')
           break
         case 404:
+          // 404错误：标记为已处理，业务代码不应再显示
+          error._handled = true
           ElMessage.error('请求的资源不存在')
           break
         case 500:
+          // 500错误：标记为已处理，业务代码不应再显示
+          error._handled = true
           ElMessage.error('服务器内部错误')
           break
         default:
+          // 其他错误：标记为已处理，业务代码不应再显示
+          error._handled = true
           ElMessage.error(data?.detail || '请求失败')
       }
     } else if (error.request) {
       // 检查是否是超时错误
+      error._handled = true  // 标记为已处理
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
         ElMessage.error('请求超时，匹配服务可能需要较长时间，请稍后重试')
       } else {
         ElMessage.error('网络连接失败，请检查网络')
       }
     } else {
+      error._handled = true  // 标记为已处理
       ElMessage.error('请求配置错误')
     }
     

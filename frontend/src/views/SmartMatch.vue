@@ -1641,7 +1641,9 @@ const startNewTask = async () => {
   } catch (error) {
     currentTask.value.status = 'error'
     currentTask.value.error = error.response?.data?.detail || error.message || '生成实现路径失败'
-    ElMessage.error(currentTask.value.error)
+    if (!error._handled) {
+      ElMessage.error(currentTask.value.error)
+    }
     console.error('生成实现路径失败:', error)
     if (pathProgressTimer) {
       clearInterval(pathProgressTimer)
@@ -2533,7 +2535,9 @@ const startMatch = async () => {
       localStorage.removeItem('smartMatchTaskState')
     }, 1000)
     
-    ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('匹配失败: ' + (error.response?.data?.detail || error.message))
+    }
     console.error('匹配失败:', error)
   }
 }
@@ -2834,7 +2838,9 @@ const _old_generateImplementationPath = async () => {
     }
   } catch (error) {
     pathError.value = error.response?.data?.detail || error.message || '生成实现路径失败'
-    ElMessage.error(pathError.value)
+    if (!error._handled) {
+      ElMessage.error(pathError.value)
+    }
     console.error('生成实现路径失败:', error)
     // 如果任务还在运行（有 pathTaskId），不要重置 generatingPath，以便用户可以重新打开对话框
     if (!pathTaskId.value) {
@@ -2881,7 +2887,9 @@ const cancelImplementationPath = async () => {
     showPathDialog.value = false
     dialogMode.value = 'idle'
   } catch (error) {
-    ElMessage.error('取消任务失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('取消任务失败: ' + (error.response?.data?.detail || error.message))
+    }
     console.error('取消实现路径失败:', error)
   } finally {
     cancellingPath.value = false
@@ -3037,7 +3045,9 @@ const loadImplementationPathHistory = async () => {
     historyPathList.value = response.data.items || []
   } catch (error) {
     historyError.value = error.response?.data?.detail || error.message || '加载历史方案失败'
-    ElMessage.error(historyError.value)
+    if (!error._handled) {
+      ElMessage.error(historyError.value)
+    }
   } finally {
     historyLoading.value = false
   }
@@ -3117,7 +3127,9 @@ const loadAllImplementationPathHistory = async () => {
     allHistoryTotal.value = response.data.total || 0
   } catch (error) {
     allHistoryError.value = error.response?.data?.detail || error.message || '加载所有历史方案失败'
-    ElMessage.error(allHistoryError.value)
+    if (!error._handled) {
+      ElMessage.error(allHistoryError.value)
+    }
   } finally {
     allHistoryLoading.value = false
   }

@@ -1,11 +1,13 @@
 """
-需求匹配服务 - 科研成果找需求（调试版）
+需求匹配服务 - 科研成果找需求（优化版）
 """
 import logging
+import time
 from typing import List, Dict
 from database.database import get_db_connection
 from services.vector_service import get_vector_service
 from services.llm_service import get_llm_service
+from services.matching_service import validate_user_input
 
 logger = logging.getLogger(__name__)
 
@@ -16,64 +18,53 @@ async def match_requirements_for_paper(
     top_k: int = 20
 ) -> List[Dict]:
     """
-    为科研成果匹配需求
+    为科研成果匹配需求（优化版：使用查询扩展，与需求匹配流程一致）
     """
-    logger.info("=" * 50)
-    logger.info("开始需求匹配流程")
-    logger.info(f"论文标题: {paper_title[:50]}...")
-    logger.info(f"论文摘要长度: {len(paper_abstract)} 字符")
-    logger.info(f"论文分类: {paper_categories}")
-    logger.info("=" * 50)
-    
     try:
+        start_time = time.time()
         llm_service = get_llm_service()
         vector_service = get_vector_service()
         
-        # ---------------------------------------------------------
-        # 步骤 1: 论文应用场景扩展
-        # ---------------------------------------------------------
-        logger.info("步骤1: 论文应用场景扩展...")
-        try:
-            application_scenarios = await llm_service.expand_paper_to_scenarios(
-                paper_title, paper_abstract
-            )
-            logger.info(f"应用场景扩展结果: {application_scenarios[:100]}...")
-        except Exception as e:
-            logger.error(f"应用场景扩展失败: {e}")
-            application_scenarios = "通用技术"
+        # 合并用户输入的成果文字
+        achievement_text = f"{paper_title}\n{paper_abstract}".strip()
         
         # ---------------------------------------------------------
-        # 步骤 2: 向量搜索相似需求
+        # 步骤 0: 输入质量检测（快速规则检测）
         # ---------------------------------------------------------
-        search_text = f"{paper_title}\n{paper_abstract}\n应用场景:{application_scenarios}"
-        logger.info(f"步骤2: 向量搜索相似需求...")
-        logger.info(f"搜索文本长度: {len(search_text)} 字符")
+        is_valid, reason = validate_user_input(achievement_text)
+        if not is_valid:
+            logger.warning(f"输入质量检测失败: {reason}, 输入: {achievement_text[:50]}...")
+            return []  # 直接返回空结果，不进行查询扩展和向量搜索
         
-        similar_requirements = vector_service.search_requirements(search_text, top_k=top_k)
+        # ---------------------------------------------------------
+        # 步骤 1: 查询扩展 (Query Expansion) - 与需求匹配一致
+        # ---------------------------------------------------------
+        logger.info(f"原始成果: {achievement_text[:200]}...")
+        expanded_query = await llm_service.expand_query(achievement_text)
+        
+        # 检查LLM是否判断输入无意义
+        if expanded_query and expanded_query.strip().upper() == "[INVALID_INPUT]":
+            logger.warning(f"LLM判断输入无意义: {achievement_text[:50]}...")
+            return []  # 直接返回空结果
+        
+        # ---------------------------------------------------------
+        # 步骤 2: 向量搜索 (Coarse Ranking)
+        # ---------------------------------------------------------
+        logger.info(f"使用增强Query进行向量搜索...")
+        coarse_start_time = time.time()
+        similar_requirements = vector_service.search_requirements(expanded_query, top_k=top_k)
+        coarse_elapsed = time.time() - coarse_start_time
+        
+        logger.info(f"向量搜索（粗排）耗时: {coarse_elapsed:.2f} 秒")
         logger.info(f"向量搜索返回: {len(similar_requirements)} 个需求")
         
         if not similar_requirements:
-            logger.warning("向量搜索返回空列表，检查需求库是否为空")
-            # 检查需求库数量
-            try:
-                health = vector_service.check_collection_health()
-                logger.info(f"向量库状态: {health}")
-                if hasattr(vector_service, 'get_requirement_count'):
-                    count = vector_service.get_requirement_count()
-                    logger.info(f"需求库数量: {count}")
-            except Exception as e:
-                logger.error(f"检查向量库状态失败: {e}")
             return []
         
-        # 打印前几个结果
-        for i, (req_id, score) in enumerate(similar_requirements[:3]):
-            logger.info(f"匹配需求 {i+1}: ID={req_id}, 相似度={score:.4f}")
-        
         # ---------------------------------------------------------
-        # 步骤 3: 获取需求详情
+        # 步骤 3: 数据填充 (Hydration) - 获取需求详情
         # ---------------------------------------------------------
         requirement_ids = [r[0] for r in similar_requirements]
-        logger.info(f"步骤3: 获取需求详情，ID列表: {requirement_ids[:5]}...")
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -85,9 +76,6 @@ async def match_requirements_for_paper(
             WHERE requirement_id IN ({placeholders}) 
             AND status = 'active'
         """
-        logger.debug(f"执行SQL: {query}")
-        logger.debug(f"参数: {requirement_ids}")
-        
         cursor.execute(query, requirement_ids)
         rows = cursor.fetchall()
         conn.close()
@@ -127,28 +115,27 @@ async def match_requirements_for_paper(
                 })
         
         logger.info(f"成功构建 {len(requirement_details)} 个需求详情")
-        for i, req in enumerate(requirement_details[:2]):
-            logger.info(f"需求详情 {i+1}: {req['title'][:30]}... (行业: {req['industry']})")
         
         # ---------------------------------------------------------
-        # 步骤 4: LLM评估论文与需求的匹配度
+        # 步骤 4: LLM评估匹配度 (Re-ranking) - 使用原始输入
         # ---------------------------------------------------------
-        logger.info(f"步骤4: LLM评估匹配度，候选需求数量: {len(requirement_details)}")
-        
         if not requirement_details:
-            logger.warning("没有可评估的需求详情")
             return []
         
+        logger.info(f"开始 LLM 精排，候选数量: {len(requirement_details)}")
+        
+        # 注意：评估时使用原始成果文字，因为那是用户的真实意图
+        rerank_start_time = time.time()
         try:
             ranked_results = await llm_service.score_requirements_for_paper(
-                paper_title=paper_title,
-                paper_abstract=paper_abstract,
-                paper_categories=paper_categories,
+                achievement_text=achievement_text,  # 使用原始输入
                 requirements=requirement_details
             )
-            logger.info(f"LLM评估返回 {len(ranked_results)} 个结果")
+            rerank_elapsed = time.time() - rerank_start_time
+            logger.info(f"LLM评估（精排）耗时: {rerank_elapsed:.2f} 秒")
         except Exception as e:
             logger.error(f"LLM评估失败: {e}")
+            rerank_elapsed = time.time() - rerank_start_time
             # 如果没有LLM结果，使用向量分数排序
             ranked_results = [
                 {
@@ -177,10 +164,8 @@ async def match_requirements_for_paper(
                     "implementation_suggestion": res.get("implementation_suggestion", "")
                 })
         
-        logger.info(f"最终输出 {len(final_output)} 个结果")
-        logger.info("=" * 50)
-        logger.info("需求匹配流程完成")
-        logger.info("=" * 50)
+        total_elapsed = time.time() - start_time
+        logger.info(f"成果匹配总耗时: {total_elapsed:.2f} 秒（粗排: {coarse_elapsed:.2f}秒, 精排: {rerank_elapsed:.2f}秒）")
         
         cleaned_output = []
         for req in final_output:

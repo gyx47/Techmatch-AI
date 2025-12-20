@@ -496,27 +496,91 @@ class LLMService:
     
     async def score_requirements_for_paper(
         self, 
-        paper_title: str,
-        paper_abstract: str,
-        paper_categories: str,
+        achievement_text: str,  # 用户输入的成果文字
         requirements: List[Dict]
     ) -> List[Dict]:
         """
-        评估论文与需求的匹配度（Listwise批量评估）
+        评估成果与需求的匹配度（优化版：截断+分批+并发，与score_papers_batch一致）
         """
+        if not requirements:
+            return []
+        
         if not self.api_key:
             return self._get_default_scores(requirements)
         
+        # ===== 优化策略1：截断策略 =====
+        # 向量搜索已经做了初步排序，通常前10个最有价值
+        # 只对前10个进行LLM评估，节省API调用成本和时间
+        top_n = 10
+        target_requirements = requirements[:top_n]
+        
+        logger.info(f"向量召回 {len(requirements)} 个需求，仅对前 {len(target_requirements)} 个进行LLM评估")
+        
+        # ===== 优化策略2：分批处理 =====
+        # 将需求分成每组5个的批次，让LLM在内部对比打分
+        batch_size = 5
+        batches = []
+        for i in range(0, len(target_requirements), batch_size):
+            batch = target_requirements[i : i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (len(target_requirements) + batch_size - 1) // batch_size
+            batches.append((batch_num, total_batches, batch))
+        
+        logger.info(f"准备并发处理 {len(batches)} 个批次，每批最多 {batch_size} 个需求")
+        
+        # ===== 优化策略3：并发调用 =====
+        # 并发处理多个批次；self.sem 会限制实际的API并发度
+        tasks = [
+            self._score_requirements_batch(achievement_text, batch)
+            for (_batch_num, _total_batches, batch) in batches
+        ]
+        batch_results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 合并结果
+        all_results: List[Dict] = []
+        for (batch_num, total_batches, batch), result in zip(batches, batch_results_list):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"批次 {batch_num}/{total_batches} ({len(batch)} 个需求) 评分失败: {result}"
+                )
+                # 失败时使用默认分数
+                all_results.extend(self._get_default_scores(batch))
+                continue
+            
+            logger.info(f"批次 {batch_num}/{total_batches} ({len(batch)} 个需求) 评分完成")
+            all_results.extend(result)
+        
+        # 按分数排序（从高到低）
+        all_results.sort(key=lambda x: x["score"], reverse=True)
+        
+        # 统计信息
+        scores = [r["score"] for r in all_results]
+        unique_scores = len(set(scores))
+        score_range = (min(scores), max(scores)) if scores else (0, 0)
+        
+        logger.info(f"LLM评估完成: 处理 {len(all_results)} 个需求，唯一分数数={unique_scores}，分数范围={score_range}")
+        
+        return all_results
+    
+    async def _score_requirements_batch(
+        self,
+        achievement_text: str,
+        requirements_batch: List[Dict]
+    ) -> List[Dict]:
+        """
+        处理单个批次的需求评分（内部方法）
+        """
         # 构建批量评估的Prompt
         requirements_text = ""
-        for idx, req in enumerate(requirements, 1):
+        for idx, req in enumerate(requirements_batch, 1):
+            pain_points = req.get('pain_points', '') or ''
             requirements_text += f"""
 [需求 {idx} - ID: {req['requirement_id']}]
 标题: {req['title']}
-行业: {req['industry']}
-痛点: {req['pain_points'][:200]}...
-技术难度: {req['technical_level']}
-市场规模: {req['market_size']}
+行业: {req.get('industry', '')}
+痛点: {pain_points[:200] if len(pain_points) > 200 else pain_points}
+技术难度: {req.get('technical_level', '')}
+市场规模: {req.get('market_size', '')}
 
 ---
 """
@@ -526,15 +590,13 @@ class LLMService:
         user_prompt = f"""
 ### 评估任务
 待评估的科研成果：
-标题：{paper_title}
-摘要：{paper_abstract}
-领域：{paper_categories}
+{achievement_text}
 
 ### 候选需求列表
 {requirements_text}
 
 ### 评分标准 (0-100分)
-- **[90-100] 直接落地 (S级)**: 论文技术直接解决该需求痛点，无需大改，市场明确
+- **[90-100] 直接落地 (S级)**: 成果技术直接解决该需求痛点，无需大改，市场明确
 - **[75-89] 高价值适配 (A级)**: 核心算法对口，需一定适配但商业价值高
 - **[60-74] 需技术适配 (B级)**: 相关但需较大技术改造，有潜在价值
 - **[40-59] 理论相关 (C级)**: 同一技术领域，但解决的是不同问题
@@ -542,6 +604,8 @@ class LLMService:
 
 ### 额外要求
 为每个匹配需求提供简短的"实施建议"（50字内），说明如何将技术应用到该需求中。
+
+**重要**：请通过对比分析，给出有区分度的分数，避免所有需求分数相同。
 
 ### 输出格式
 返回JSON数组：
@@ -556,21 +620,63 @@ class LLMService:
 """
         
         try:
-            content = await self._call_deepseek([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ], temperature=0.7, max_tokens=2000, force_json=False)
+            async with self.sem:  # 并发控制
+                content = await self._call_deepseek([
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ], temperature=0.7, max_tokens=1500, force_json=False)
             
             # 解析结果
-            import json
-            data = json.loads(content)
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                # 如果失败，尝试提取JSON部分
+                json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                if json_match:
+                    data = json.loads(json_match.group())
+                else:
+                    raise ValueError(f"无法解析JSON: {content[:200]}")
             
-            # 返回排序后的结果
-            return sorted(data, key=lambda x: x["score"], reverse=True)
+            # 确保返回的是列表
+            if not isinstance(data, list):
+                data = [data]
+            
+            # 构建结果列表
+            results = []
+            requirement_id_map = {req["requirement_id"]: req for req in requirements_batch}
+            
+            for item in data:
+                req_id = item.get("requirement_id")
+                if req_id and req_id in requirement_id_map:
+                    score = int(item.get("score", 50))
+                    # 确保分数在0-100范围内
+                    score = max(0, min(100, score))
+                    results.append({
+                        "requirement_id": req_id,
+                        "score": score,
+                        "reason": item.get("reason", "未提供理由"),
+                        "implementation_suggestion": item.get("implementation_suggestion", "")
+                    })
+            
+            # 如果解析失败，为所有需求返回默认分数
+            if len(results) != len(requirements_batch):
+                logger.warning(f"批次解析不完整: 期望 {len(requirements_batch)} 个，实际 {len(results)} 个")
+                parsed_ids = {r["requirement_id"] for r in results}
+                for req in requirements_batch:
+                    if req["requirement_id"] not in parsed_ids:
+                        results.append({
+                            "requirement_id": req["requirement_id"],
+                            "score": 50,
+                            "reason": "解析失败，使用默认分数",
+                            "implementation_suggestion": ""
+                        })
+            
+            return results
             
         except Exception as e:
-            logger.error(f"需求评分失败: {e}")
-            return self._get_default_scores(requirements)
+            logger.error(f"批次评分失败: {e}")
+            # 返回默认分数
+            return self._get_default_scores(requirements_batch)
     
     def _get_default_scores(self, requirements: List[Dict]) -> List[Dict]:
         """基于向量相似度生成有意义的评分和理由"""

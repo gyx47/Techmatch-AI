@@ -126,7 +126,9 @@ const onSubmit = async () => {
       const redirect = router.currentRoute.value.query.redirect || '/'
       router.replace(redirect)
     } catch (e) {
-      ElMessage.error(e?.message || '注册失败，请检查后端服务是否运行')
+      if (!e._handled) {
+        ElMessage.error(e?.message || '注册失败，请检查后端服务是否运行')
+      }
     } finally {
       loading.value = false
     }

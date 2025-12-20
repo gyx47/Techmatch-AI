@@ -173,7 +173,9 @@ const sendMessage = async () => {
       timestamp: new Date()
     }
     messages.value.push(errorMessage)
-    ElMessage.error('发送消息失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('发送消息失败: ' + (error.response?.data?.detail || error.message))
+    }
   } finally {
     isLoading.value = false
     await nextTick()
@@ -220,7 +222,9 @@ const loadHistory = async () => {
     await nextTick()
     scrollToBottom()
   } catch (error) {
-    ElMessage.error('加载历史记录失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('加载历史记录失败: ' + (error.response?.data?.detail || error.message))
+    }
   }
 }
 

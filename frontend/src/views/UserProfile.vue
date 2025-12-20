@@ -526,7 +526,9 @@ const handleRematch = async (row) => {
       return
     }
     
-    ElMessage.error('获取匹配结果失败: ' + (error.response?.data?.detail || error.message))
+    if (!error._handled) {
+      ElMessage.error('获取匹配结果失败: ' + (error.response?.data?.detail || error.message))
+    }
   }
 }
 const passwordFormRef = ref()
@@ -795,7 +797,9 @@ const submitEdit = async () => {
     await loadMyPublishments()
   } catch (error) {
     console.error('更新失败:', error)
-    ElMessage.error(error.response?.data?.detail || '更新失败，请稍后重试')
+    if (!error._handled) {
+      ElMessage.error(error.response?.data?.detail || '更新失败，请稍后重试')
+    }
     // 更新失败时不关闭对话框，让用户修改后重试
   } finally {
     submittingEdit.value = false
@@ -855,7 +859,9 @@ const handleDelete = async (row) => {
       return
     }
     console.error('删除失败:', error)
-    ElMessage.error(error.response?.data?.detail || '删除失败，请稍后重试')
+    if (!error._handled) {
+      ElMessage.error(error.response?.data?.detail || '删除失败，请稍后重试')
+    }
   }
 }
 
@@ -899,7 +905,9 @@ const handleChangePassword = async () => {
       passwordFormRef.value.clearValidate()
     } catch (error) {
       console.error('修改密码失败:', error)
-      ElMessage.error(error.response?.data?.detail || '密码修改失败，请检查当前密码是否正确')
+      if (!error._handled) {
+        ElMessage.error(error.response?.data?.detail || '密码修改失败，请检查当前密码是否正确')
+      }
     } finally {
       changingPassword.value = false
     }

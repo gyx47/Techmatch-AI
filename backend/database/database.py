@@ -398,6 +398,43 @@ def get_papers_by_query_paginated(query: str = "", page: int = 1, page_size: int
         "items": papers
     }
 
+def get_requirements_by_query_paginated(query: str = "", page: int = 1, page_size: int = 20) -> dict:
+    """根据查询条件搜索需求（分页，从requirements表）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建查询条件
+    if query and query.strip():
+        where_clause = "WHERE status = 'active' AND (title LIKE ? OR description LIKE ? OR industry LIKE ? OR pain_points LIKE ?)"
+        params = [f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%"]
+    else:
+        where_clause = "WHERE status = 'active'"
+        params = []
+    
+    # 计算总数
+    count_sql = f"SELECT COUNT(*) as total FROM requirements {where_clause}"
+    cursor.execute(count_sql, params)
+    total = cursor.fetchone()['total']
+    
+    # 获取分页数据
+    offset = (page - 1) * page_size
+    select_sql = f"""
+        SELECT * FROM requirements 
+        {where_clause}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """
+    cursor.execute(select_sql, params + [page_size, offset])
+    requirements = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": requirements
+    }
+
 def save_match_history(user_id: Optional[int], search_desc: str, match_mode: str, results: List[dict]) -> int:
     """
     保存匹配历史
