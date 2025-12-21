@@ -16,3 +16,6 @@ chroma_db/*
 .aider*
 .env
 .env
+backend/.venv/*
+.DS_Store
+models/*
