@@ -1,4 +1,4 @@
-# run_requirement_indexing.py
+# run_requirement_indexing.py（或diagnose_chromadb.py）
 import sys
 from pathlib import Path
 
@@ -19,6 +19,20 @@ def run_indexing():
         # 获取向量服务
         vector_service = get_vector_service()
         
+        # 🔴 第一步：清理旧数据（关键！）
+        print("🧹 清理旧向量数据...")
+        try:
+            # 获取当前向量库中的所有ID
+            existing_ids = vector_service.requirement_collection.get()["ids"]
+            if existing_ids:
+                print(f"   发现 {len(existing_ids)} 个旧记录，正在删除...")
+                vector_service.requirement_collection.delete(ids=existing_ids)
+                print(f"   ✅ 已清理 {len(existing_ids)} 条旧记录")
+            else:
+                print("   ✅ 向量库为空，无需清理")
+        except Exception as e:
+            print(f"   ⚠️  清理时出错: {e}")
+        
         # 获取数据库连接
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -26,7 +40,7 @@ def run_indexing():
         # 1. 首先检查SQLite中有多少需求
         cursor.execute("SELECT COUNT(*) as count FROM requirements WHERE status = 'active'")
         db_count = cursor.fetchone()['count']
-        print(f"📊 SQLite数据库中的需求数量: {db_count}")
+        print(f"\n📊 SQLite数据库中的需求数量: {db_count}")
         
         if db_count == 0:
             print("❌ 数据库中没有需求数据！")
@@ -63,16 +77,6 @@ def run_indexing():
                 
                 print(f"   [{i+1}/{len(requirements)}] 处理: {requirement_id}")
                 
-                # 检查是否已存在（避免重复）
-                try:
-                    existing = vector_service.requirement_collection.get(ids=[requirement_id])
-                    if existing['ids']:
-                        print(f"     ⚠️  已存在，跳过")
-                        skipped_count += 1
-                        continue
-                except:
-                    pass  # 不存在，继续
-                
                 # 准备数据
                 title = req["title"] or ""
                 description = req["description"] or ""
@@ -107,7 +111,6 @@ def run_indexing():
         print(f"\n🎉 索引完成!")
         print(f"   数据库需求总数: {len(requirements)}")
         print(f"   成功索引: {indexed_count}")
-        print(f"   跳过(已存在): {skipped_count}")
         print(f"   处理失败: {error_count}")
         print(f"   向量库最终数量: {final_count}")
         
