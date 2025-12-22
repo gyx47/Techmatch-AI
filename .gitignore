@@ -19,3 +19,5 @@ chroma_db/*
 backend/.venv/*
 .DS_Store
 models/*
+backend/database/app.db
+chroma_db/*
