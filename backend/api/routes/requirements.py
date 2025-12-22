@@ -29,6 +29,16 @@ class GenerateAnalysisResponse(BaseModel):
     score: Optional[int] = 0
     match_type: Optional[str] = ""
 
+class DetailedReportRequest(BaseModel):
+    requirement_data: Dict[str, Any]
+    user_input: Optional[str] = ""
+    report_type: str = "detailed_cooperation"
+
+class DetailedReportResponse(BaseModel):
+    success: bool
+    report: Dict[str, Any]
+    message: str = ""
+
 
 @router.post("/generate-analysis", response_model=GenerateAnalysisResponse)
 async def generate_requirement_analysis(
@@ -441,4 +451,141 @@ async def get_requirements_list(
     except Exception as e:
         logger.error(f"获取需求列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取需求列表失败: {str(e)}")
+    
+
+@router.post("/generate-detailed-report", response_model=DetailedReportResponse)
+async def generate_detailed_cooperation_report(
+    request: DetailedReportRequest,
+    current_user: str = Depends(get_current_user)
+):
+    """
+    生成详细合作报告
+    """
+    try:
+        llm_service = get_llm_service()
+        requirement = request.requirement_data
+        
+        # 构建详细的报告生成提示词
+        prompt = build_detailed_report_prompt(requirement, request.user_input)
+        
+        content = await llm_service._call_deepseek([
+            {"role": "system", "content": "你是一位资深的企业合作顾问和技术转移专家。"},
+            {"role": "user", "content": prompt}
+        ], temperature=0.7, max_tokens=3000)
+        
+        result = json.loads(content)
+        
+        return DetailedReportResponse(
+            success=True,
+            report=result,
+            message="详细合作报告生成成功"
+        )
+        
+    except Exception as e:
+        logger.error(f"生成详细合作报告失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成详细合作报告失败: {str(e)}")
+
+def build_detailed_report_prompt(requirement, user_input=""):
+    """构建详细报告提示词"""
+    
+    prompt = f"""
+作为资深的企业合作顾问，请为以下需求生成一份详细的企业合作分析报告。
+
+【需求基本信息】
+标题：{requirement.get('title', '')}
+行业：{requirement.get('industry', '')}
+技术难度：{requirement.get('technical_level', '')}
+市场规模：{requirement.get('market_size', '')}
+核心痛点：{requirement.get('pain_points', '')[:500]}
+详细描述：{requirement.get('description', '')[:1000]}
+
+【已有的匹配信息】
+匹配分数：{requirement.get('match_score', '未评分')}
+匹配等级：{requirement.get('match_type', '未分类')}
+匹配理由：{requirement.get('match_reason', '无')}
+
+【用户关注点】
+{user_input if user_input else '无特定关注点'}
+
+【报告要求】
+请生成一份专业、详细的合作分析报告，包含以下部分：
+
+1. 项目概述：包括合作潜力评分、建议合作类型
+2. 详细需求分析：深入分析技术需求、业务需求，列出技术需求要点
+3. 痛点深度剖析：对每个痛点进行详细分析，包括严重程度、影响范围
+4. AI推荐理由：从技术匹配度、商业价值、实施可行性三个维度评分并详细分析
+5. 合作建议：提供具体的合作建议，包括建议内容、优先级、预计耗时、所需资源、预期成果
+6. 合作周期规划：分阶段规划合作周期，包括各阶段的名称、持续时间、预算、关键任务、预期成果
+7. 风险分析与应对：分析合作可能面临的风险，包括风险类型、等级、发生概率、描述、应对措施
+8. 财务分析（可选）：包括总投资预算、预计ROI、回本周期、成功概率、备注
+9. 下一步行动：提供具体的下一步行动建议
+
+【输出格式】
+请返回JSON格式，数据结构示例如下：
+{{
+    "overall_score": 85,
+    "cooperation_type": "技术开发与咨询",
+    "detailed_analysis": "详细的...",
+    "technical_points": ["要点1", "要点2"],
+    "pain_points_detail": [
+        {{
+            "title": "痛点标题",
+            "severity": "高/中/低",
+            "description": "详细描述",
+            "impact": "影响范围"
+        }}
+    ],
+    "technical_score": 85,
+    "business_score": 80,
+    "implementation_score": 75,
+    "recommendation_analysis": "详细的分析...",
+    "cooperation_suggestions": [
+        {{
+            "title": "建议标题",
+            "content": "建议内容",
+            "priority": "高/中/低",
+            "estimated_time": "预计耗时",
+            "resource_requirements": "所需资源",
+            "expected_outcomes": "预期成果"
+        }}
+    ],
+    "cooperation_phases": [
+        {{
+            "name": "阶段名称",
+            "duration": "持续时间",
+            "budget": "预算",
+            "key_tasks": ["任务1", "任务2"],
+            "expected_outcomes": "预期成果"
+        }}
+    ],
+    "risk_analysis": [
+        {{
+            "type": "风险类型",
+            "level": "高/中/低",
+            "probability": "发生概率",
+            "description": "风险描述",
+            "mitigation_strategy": "应对措施"
+        }}
+    ],
+    "financial_analysis": {{
+        "total_budget": "总投资预算",
+        "roi_estimate": "预计ROI",
+        "payback_period": "回本周期",
+        "success_probability": "成功概率",
+        "note": "备注"
+    }},
+    "next_steps": [
+        {{
+            "title": "行动标题",
+            "description": "行动描述",
+            "suggested_time": "建议时间",
+            "resource_needed": "所需资源"
+        }}
+    ]
+}}
+
+注意：所有内容必须详尽、具体、专业，用中文回答。分析要深入，建议要可执行。
+"""
+    
+    return prompt
     
