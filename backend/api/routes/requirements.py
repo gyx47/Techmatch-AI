@@ -486,7 +486,16 @@ async def generate_detailed_cooperation_report(
         raise HTTPException(status_code=500, detail=f"生成详细合作报告失败: {str(e)}")
 
 def build_detailed_report_prompt(requirement, user_input=""):
-    """构建详细报告提示词"""
+    """构建详细报告提示词（兼容系统生成需求和用户发布需求）"""
+    
+    # 兼容不同来源的需求字段
+    # 系统生成需求(requirements)字段：technical_level, market_size, pain_points, contact_info
+    # 用户发布需求(published_needs)字段：urgency_level, budget_range, cooperation_preference, company_name, contact_name, contact_phone, contact_email
+    
+    technical_level = requirement.get('technical_level', '') or requirement.get('urgency_level', '')
+    market_size = requirement.get('market_size', '') or requirement.get('budget_range', '')
+    pain_points = requirement.get('pain_points', '')
+    company_info = requirement.get('company_name', '') or (requirement.get('contact_info', '') and requirement.get('contact_info', '').split('@')[0] if '@' in str(requirement.get('contact_info', '')) else '')
     
     prompt = f"""
 作为资深的企业合作顾问，请为以下需求生成一份详细的企业合作分析报告。
@@ -494,10 +503,11 @@ def build_detailed_report_prompt(requirement, user_input=""):
 【需求基本信息】
 标题：{requirement.get('title', '')}
 行业：{requirement.get('industry', '')}
-技术难度：{requirement.get('technical_level', '')}
-市场规模：{requirement.get('market_size', '')}
-核心痛点：{requirement.get('pain_points', '')[:500]}
+技术难度/紧急程度：{technical_level}
+市场规模/预算范围：{market_size}
+核心痛点：{str(pain_points)[:500] if pain_points else '未提供'}
 详细描述：{requirement.get('description', '')[:1000]}
+公司信息：{company_info}
 
 【已有的匹配信息】
 匹配分数：{requirement.get('match_score', '未评分')}

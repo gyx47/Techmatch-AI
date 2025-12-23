@@ -122,18 +122,6 @@
                 <div class="card-body">
                   <div class="summary-content" v-html="highlightKeywords(item.summary)"></div>
                 
-                <!-- 如果是成果类型，显示作者等信息 -->
-                <div v-if="item.type !== '需求'" class="achievement-extra">
-                  <div class="extra-item" v-if="item.authors">
-                    <span class="extra-label">作者：</span>
-                    <span class="extra-value">{{ item.authors.split(',').slice(0, 3).join(', ') }}{{ item.authors.split(',').length > 3 ? '等' : '' }}</span>
-                  </div>
-                  <div class="extra-item" v-if="item.published_date">
-                    <span class="extra-label">发布日期：</span>
-                    <span class="extra-value">{{ formatDate(item.published_date) }}</span>
-                  </div>
-                </div>
-                
                 <!-- 推荐理由 -->
                   <div class="reason-section" v-if="item.reason">
                     <div class="reason-label">

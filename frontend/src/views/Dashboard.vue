@@ -364,11 +364,13 @@
               <p class="section-content">{{ currentItem.industry }}</p>
             </div>
             
-            <!-- AI生成的需求特有字段 -->
+            <!-- 系统搜集的需求特有字段 -->
             <template v-if="currentItem.type === 'requirement' && currentItem.raw_data">
               <div class="detail-section" v-if="currentItem.raw_data.pain_points">
                 <h4 class="section-title">核心痛点</h4>
-                <p class="section-content">{{ currentItem.raw_data.pain_points }}</p>
+                <div class="section-content">
+                  <p style="white-space: pre-wrap; line-height: 1.8;">{{ currentItem.raw_data.pain_points }}</p>
+                </div>
               </div>
               <div class="detail-section" v-if="currentItem.raw_data.technical_level">
                 <h4 class="section-title">技术难度</h4>
@@ -377,6 +379,12 @@
               <div class="detail-section" v-if="currentItem.raw_data.market_size">
                 <h4 class="section-title">市场规模</h4>
                 <p class="section-content">{{ currentItem.raw_data.market_size }}</p>
+              </div>
+              <div class="detail-section" v-if="currentItem.raw_data.application_scenario">
+                <h4 class="section-title">应用场景</h4>
+                <div class="section-content">
+                  <p style="white-space: pre-wrap; line-height: 1.8;">{{ currentItem.raw_data.application_scenario }}</p>
+                </div>
               </div>
             </template>
             
@@ -574,7 +582,7 @@ const publishedAchievementPageSize = ref(10)
 const publishedAchievementTotal = ref(0)
 
 const needPage = ref(1)
-const needPageSize = ref(10)
+const needPageSize = ref(10) 
 const needTotal = ref(0)
 const paginatedNeeds = ref([])
 
@@ -736,6 +744,9 @@ const loadNeeds = async () => {
   try {
     const allNeeds = []
     
+    let requirementsTotal = 0
+    let publishedNeedsTotal = 0
+    
     // 1. 获取系统生成的需求（requirements表）
     try {
       const requirementsResponse = await api.get('/requirements/list', {
@@ -745,20 +756,23 @@ const loadNeeds = async () => {
           page_size: needPageSize.value
         }
       })
-      if (requirementsResponse.data && requirementsResponse.data.items) {
-        requirementsResponse.data.items.forEach(req => {
-          allNeeds.push({
-            id: `req_${req.requirement_id}`,
-            type: 'requirement',
-            data_source: 'AI生成',
-            title: req.title,
-            description: req.description,
-            industry: req.industry,
-            company_name: req.contact_info ? req.contact_info.split('@')[0] : '未知',
-            publish_time: req.created_at || req.published_date,
-            raw_data: req
+      if (requirementsResponse.data) {
+        requirementsTotal = requirementsResponse.data.total || 0
+        if (requirementsResponse.data.items) {
+          requirementsResponse.data.items.forEach(req => {
+            allNeeds.push({
+              id: `req_${req.requirement_id}`,
+              type: 'requirement',
+              data_source: '系统搜集',
+              title: req.title,
+              description: req.description,
+              industry: req.industry,
+              company_name: req.contact_info ? req.contact_info.split('@')[0] : '未知',
+              publish_time: req.created_at || req.published_date,
+              raw_data: req
+            })
           })
-        })
+        }
       }
     } catch (error) {
       console.error('加载系统生成需求失败:', error)
@@ -773,20 +787,23 @@ const loadNeeds = async () => {
           keyword: needSearchQuery.value || undefined
         }
       })
-      if (publishedNeedsResponse.data && publishedNeedsResponse.data.items) {
-        publishedNeedsResponse.data.items.forEach(need => {
-          allNeeds.push({
-            id: `need_${need.id}`,
-            type: 'published_need',
-            data_source: '用户发布',
-            title: need.title,
-            description: need.description,
-            industry: need.industry,
-            company_name: need.company_name,
-            publish_time: need.created_at,
-            raw_data: need
+      if (publishedNeedsResponse.data) {
+        publishedNeedsTotal = publishedNeedsResponse.data.total || 0
+        if (publishedNeedsResponse.data.items) {
+          publishedNeedsResponse.data.items.forEach(need => {
+            allNeeds.push({
+              id: `need_${need.id}`,
+              type: 'published_need',
+              data_source: '用户发布',
+              title: need.title,
+              description: need.description,
+              industry: need.industry,
+              company_name: need.company_name,
+              publish_time: need.created_at,
+              raw_data: need
+            })
           })
-        })
+        }
       }
     } catch (error) {
       console.error('加载用户发布需求失败:', error)
@@ -799,8 +816,9 @@ const loadNeeds = async () => {
       return timeB - timeA
     })
     
-    // 4. 设置分页数据
-    needTotal.value = allNeeds.length
+    // 4. 设置分页数据（总数应该是两个API的总数之和）
+    needTotal.value = requirementsTotal + publishedNeedsTotal
+    // 直接显示合并后的所有数据（因为两个API已经分别分页了）
     paginatedNeeds.value = allNeeds
   } catch (error) {
     if (!error._handled) {
