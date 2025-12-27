@@ -4,37 +4,6 @@
       <h1 class="title">资源大厅</h1>
       <p class="subtitle">浏览全网最新科研成果与企业需求</p>
 
-      <!-- 操作按钮区域 -->
-      <div class="actions">
-        <el-button 
-          type="success" 
-          @click="showCrawlerDialog = true" 
-          :loading="crawling"
-          :disabled="crawlerStatus === 'running'"
-        >
-          <el-icon><Refresh /></el-icon>
-          更新数据
-        </el-button>
-        <el-button 
-          type="danger" 
-          @click="stopCrawler" 
-          :loading="stopping"
-          :disabled="crawlerStatus !== 'running'"
-        >
-          <el-icon><Close /></el-icon>
-          停止爬虫
-        </el-button>
-        <el-button 
-          type="warning" 
-          @click="startIndexing" 
-          :loading="indexing"
-          :disabled="indexerStatus === 'running' || (vectorStats && vectorStats.unindexed_count === 0)"
-        >
-          <el-icon><DocumentAdd /></el-icon>
-          向量化论文
-        </el-button>
-      </div>
-
       <!-- 数据统计卡片 -->
       <div class="section" v-if="vectorStats">
         <h3>数据统计</h3>
@@ -61,19 +30,6 @@
             </div>
           </el-col>
         </el-row>
-        <!-- 未向量化论文提示 -->
-        <el-alert
-          v-if="vectorStats && vectorStats.unindexed_count > 0"
-          :title="`还有 ${vectorStats.unindexed_count} 篇论文未向量化`"
-          type="warning"
-          :closable="false"
-          show-icon
-          style="margin-top: 15px;"
-        >
-          <template #default>
-            <span>点击"向量化论文"按钮将这些论文添加到向量数据库，以便进行匹配搜索。</span>
-          </template>
-        </el-alert>
         <!-- 索引任务进度 -->
         <el-card v-if="indexerStatus && indexerStatus.status === 'running'" style="margin-top: 15px;">
           <template #header>
